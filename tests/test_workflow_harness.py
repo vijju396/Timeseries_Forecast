@@ -185,6 +185,13 @@ def main():
             content_type="multipart/form-data",
         )
         assert blocked.status_code == 409, blocked.get_json()
+        independent_upload = other_client.post(
+            "/dataset/upload",
+            data={"dataset_file": (io.BytesIO(_csv().encode()), "independent.csv")},
+            content_type="multipart/form-data",
+        )
+        assert independent_upload.status_code == 200, independent_upload.get_json()
+        assert client.get("/api/current-dataset").get_json()["dataset_id"] == large_id
         stale_thread = training_service._TRAINING_THREAD
         data_service.clear_generated_dataset_state()
         training_service.reset_training_state(force=True)

@@ -37,6 +37,7 @@ MODEL_SPECS = [
 _THREAD_LOCK = threading.Lock()
 _STATUS_LOCK = threading.Lock()
 _TRAINING_THREAD = None
+_TRAINING_THREAD_NAMESPACE = None
 _IN_MEMORY_STATUSES = {}
 
 
@@ -91,17 +92,24 @@ def _set_dataset_phase(dataset_id, phase, job_id):
 
 
 def reject_if_training_active():
-    if _TRAINING_THREAD and _TRAINING_THREAD.is_alive():
+    if (
+        _TRAINING_THREAD
+        and _TRAINING_THREAD.is_alive()
+        and _TRAINING_THREAD_NAMESPACE == _status_namespace_key()
+    ):
         raise TrainingConflictError("Training is already running. Wait for it to finish before replacing the active dataset.")
 
 
 def reset_training_state(force=False):
-    global _TRAINING_THREAD
+    global _TRAINING_THREAD, _TRAINING_THREAD_NAMESPACE
     if not force:
         reject_if_training_active()
     with _STATUS_LOCK:
         _clear_memory_status()
-    _TRAINING_THREAD = None
+    thread_alive = bool(_TRAINING_THREAD and _TRAINING_THREAD.is_alive())
+    if force or not thread_alive or _TRAINING_THREAD_NAMESPACE == _status_namespace_key():
+        _TRAINING_THREAD = None
+        _TRAINING_THREAD_NAMESPACE = None
 
 
 def _active_dataset_for_training(dataset_id):
@@ -136,19 +144,22 @@ def _active_dataset_for_training(dataset_id):
 
 
 def start_background_training(dataset_mapping=None):
-    global _TRAINING_THREAD
+    global _TRAINING_THREAD, _TRAINING_THREAD_NAMESPACE
     with _THREAD_LOCK:
         dataset_mapping = dataset_mapping or {}
         dataset_id = dataset_mapping.get("dataset_id") or current_dataset_id()
         _dataset, adapted = _active_dataset_for_training(dataset_id)
         if _TRAINING_THREAD and _TRAINING_THREAD.is_alive():
-            raise TrainingConflictError("Training is already running for the active dataset.")
+            if _TRAINING_THREAD_NAMESPACE == _status_namespace_key():
+                raise TrainingConflictError("Training is already running for the active dataset.")
+            raise TrainingConflictError("Training capacity is currently in use by another browser. You can upload and map data now, then start training when the active job finishes.")
         job_id = uuid.uuid4().hex
         _set_dataset_phase(dataset_id, "training", job_id)
         with _STATUS_LOCK:
             _clear_memory_status()
         _write_status(_initial_status(dataset_id=dataset_id, job_id=job_id, artifact_id=adapted.get("artifact_id")))
         runtime_namespace = current_runtime_namespace()
+        _TRAINING_THREAD_NAMESPACE = _status_namespace_key()
         _TRAINING_THREAD = threading.Thread(
             target=_run_training_in_namespace,
             args=(runtime_namespace, dataset_mapping, dataset_id, job_id, adapted.get("artifact_id")),
@@ -174,7 +185,11 @@ def get_training_status():
             status = _idle_status()
         _set_memory_status(status)
     status = _recover_stale_training_status(status)
-    status["background_thread_alive"] = bool(_TRAINING_THREAD and _TRAINING_THREAD.is_alive())
+    status["background_thread_alive"] = bool(
+        _TRAINING_THREAD
+        and _TRAINING_THREAD.is_alive()
+        and _TRAINING_THREAD_NAMESPACE == _status_namespace_key()
+    )
     status["active_lock_owner"] = status.get("job_id") if _THREAD_LOCK.locked() else None
     status["exact_last_function"] = status.get("phase") or status.get("current_step")
     if status.get("status") == "running" and status.get("start_time"):
@@ -185,7 +200,12 @@ def get_training_status():
 
 
 def _recover_stale_training_status(status):
-    if status.get("status") != "running" or (_TRAINING_THREAD and _TRAINING_THREAD.is_alive()):
+    active_thread = bool(
+        _TRAINING_THREAD
+        and _TRAINING_THREAD.is_alive()
+        and _TRAINING_THREAD_NAMESPACE == _status_namespace_key()
+    )
+    if status.get("status") != "running" or active_thread:
         return status
     terminal_models = len(status.get("completed_models") or []) + len(status.get("failed_models") or [])
     expected_models = status.get("models_expected") or status.get("total_models") or 0
@@ -223,7 +243,7 @@ def _recover_stale_training_status(status):
 
 
 def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=None, artifact_id=None):
-    global _TRAINING_THREAD
+    global _TRAINING_THREAD, _TRAINING_THREAD_NAMESPACE
     start_wall = datetime.now()
     start_timer = time.perf_counter()
     status = _initial_status(start_wall, dataset_id=dataset_id, job_id=job_id, artifact_id=artifact_id)
@@ -488,6 +508,7 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
         with _THREAD_LOCK:
             if _TRAINING_THREAD is threading.current_thread():
                 _TRAINING_THREAD = None
+                _TRAINING_THREAD_NAMESPACE = None
 
 
 def _fitters():
