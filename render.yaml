@@ -1,15 +1,13 @@
 services:
   - type: web
     name: timeseries-forecast
-    runtime: python
+    runtime: docker
     plan: free
     autoDeployTrigger: commit
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 600
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.10
       - key: FLASK_DEBUG
         value: "0"
       - key: CLEAR_RUNTIME_ON_START

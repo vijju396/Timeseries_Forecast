@@ -33,26 +33,14 @@ Validation uses rolling-origin folds where the dataset is large enough. Each com
 
 ## Render deployment
 
-The repository includes `render.yaml` and `.python-version`. In Render:
+The repository includes a Docker-based `render.yaml`. In Render:
 
 1. Choose **New > Blueprint**.
 2. Connect `vijju396/Timeseries_Forecast` and select the `main` branch.
 3. Confirm the Blueprint and create the `timeseries-forecast` service.
 4. Wait for `/health` to pass, then open the generated `onrender.com` URL.
 
-The Blueprint starts on Render's free instance type to avoid unexpected charges. The application UI can deploy there, but the complete TensorFlow/XGBoost/Auto-ARIMA portfolio can exceed its 512 MB memory limit. Upgrade the web service to at least the Standard instance type for full-model training.
-
-Build command:
-
-```text
-pip install -r requirements.txt
-```
-
-Start command:
-
-```text
-gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 600
-```
+The Docker image fixes Python at 3.12 and installs the CPU-only TensorFlow wheel. The Blueprint starts on Render's free instance type to avoid unexpected charges. The application UI can deploy there, but the complete TensorFlow/XGBoost/Auto-ARIMA portfolio can exceed its 512 MB memory limit. Upgrade the web service to at least the Standard instance type for full-model training.
 
 Environment variables:
 
