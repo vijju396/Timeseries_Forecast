@@ -40,7 +40,7 @@ The repository includes a Docker-based `render.yaml`. In Render:
 3. Confirm the Blueprint and create the `timeseries-forecast` service.
 4. Wait for `/health` to pass, then open the generated `onrender.com` URL.
 
-The Docker image fixes Python at 3.12 and installs the CPU-only TensorFlow wheel. The Blueprint starts on Render's free instance type to avoid unexpected charges. The application UI can deploy there, but the complete TensorFlow/XGBoost/Auto-ARIMA portfolio can exceed its 512 MB memory limit. Upgrade the web service to at least the Standard instance type for full-model training.
+The Docker image fixes Python at 3.12 and installs CPU-only TensorFlow and XGBoost wheels. The Blueprint starts on Render's free instance type to avoid unexpected charges. The application UI can deploy there, but the complete TensorFlow/XGBoost/Auto-ARIMA portfolio can exceed its 512 MB memory limit. Upgrade the web service to at least the Standard instance type for full-model training.
 
 Environment variables:
 
