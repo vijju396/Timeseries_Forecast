@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Model Leaderboard | ACI Forecast Intelligence{% endblock %}
+{% block breadcrumb %}Model Leaderboard{% endblock %}
+{% block content %}
+<section class="page-intro compact" data-page="model-metrics"><div><span class="section-kicker">Evidence-based selection</span><h1>Model Leaderboard</h1><p>Rolling-origin performance ranked by lowest MAPE.</p></div><span class="status-chip"><i data-lucide="shield-check"></i>Real trained models</span></section>
+
+<section class="champion-hero">
+  <div class="champion-identity"><span class="champion-badge"><i data-lucide="award"></i>Champion Model</span><h2>{{ champion.model_label or champion.model or "Pending" }}</h2><p>Best completed candidate by average rolling-origin MAPE.</p></div>
+  <div class="champion-metrics">
+    <div><span>MAPE</span><strong>{{ '%.2f%%' | format(champion.mape) if champion else '--' }}</strong></div>
+    <div><span>Accuracy</span><strong>{{ '%.2f%%' | format(champion.accuracy) if champion else '--' }}</strong></div>
+    <div><span>MAE</span><strong>{{ '%.2f' | format(champion.mae) if champion else '--' }}</strong></div>
+    <div><span>RMSE</span><strong>{{ '%.2f' | format(champion.rmse) if champion else '--' }}</strong></div>
+    <div><span>WAPE</span><strong>{{ '%.2f%%' | format(champion.wape) if champion else '--' }}</strong></div>
+    <div><span>Bias</span><strong>{{ '%.2f%%' | format(champion.bias) if champion else '--' }}</strong></div>
+    <div><span>Runtime</span><strong>{{ '%.2fs' | format(champion.runtime_seconds or 0) if champion else '--' }}</strong></div>
+  </div>
+</section>
+
+<section class="leaderboard-kpis">
+  <article><span>Best MAPE</span><strong id="bestMape">--</strong><small>Lowest percentage error</small></article>
+  <article><span>Best Accuracy</span><strong id="bestAccuracy">--</strong><small>Highest forecast accuracy</small></article>
+  <article><span>Lowest RMSE</span><strong id="lowestRmse">--</strong><small>Smallest large-error penalty</small></article>
+  <article><span>Lowest Bias</span><strong id="lowestBias">--</strong><small>Closest to neutral</small></article>
+  <article><span>Models Completed</span><strong id="modelsCompleted">{{ metrics|length }}</strong><small>Eligible for ranking</small></article>
+  <article><span>Models Failed</span><strong id="modelsFailed">{{ failed_models|length }}</strong><small>Excluded from champion</small></article>
+</section>
+
+<section class="model-status-strip">
+  <div><i data-lucide="circle-check-big"></i><span>Completed<strong id="statusCompleted">{{ metrics|length }}</strong></span></div>
+  <div><i data-lucide="circle-x"></i><span>Failed<strong id="statusFailed">{{ failed_models|length }}</strong></span></div>
+  <div><i data-lucide="trophy"></i><span>Champion<strong>{{ champion.model_label or champion.model or '--' }}</strong></span></div>
+  <div><i data-lucide="refresh-cw"></i><span>Evaluation<strong id="statusEvaluation">{{ champion.evaluation_mode or 'Rolling-origin evaluation' }}</strong></span></div>
+  <div><i data-lucide="timer"></i><span>Last runtime<strong id="statusRuntime">--</strong></span></div>
+</section>
+
+<section class="model-visual-grid">
+  <article class="surface chart-panel"><div class="panel-heading"><div><span class="section-kicker">Ranked performance</span><h2>MAPE by model</h2><p>Lower values indicate stronger forecasts.</p></div><span class="champion-badge">Champion highlighted</span></div><canvas id="modelRankingChart"></canvas></article>
+  <article class="surface chart-panel"><div class="panel-heading"><div><span class="section-kicker">Quality matrix</span><h2>Accuracy vs error</h2><p>MAPE against RMSE; bubble size reflects MAE.</p></div><span class="format-badge">Best near origin</span></div><canvas id="accuracyErrorChart"></canvas></article>
+</section>
+
+<section class="surface leaderboard-panel"><div class="panel-heading"><div><h2>Completed model ranking</h2><p>{{ metrics|length }} successful candidates sorted by MAPE.</p></div><span class="format-badge">Rolling-origin evaluation</span></div><div class="table-wrap leaderboard-table-wrap"><table><thead><tr><th>Rank</th><th>Model</th><th>Status</th><th>MAPE</th><th>Accuracy</th><th>MAE</th><th>RMSE</th><th>WAPE</th><th>Bias</th><th>Runtime</th></tr></thead><tbody>{% for metric in metrics %}<tr class="{{ 'champion-row' if loop.first else '' }}"><td><span class="rank-cell">{{ loop.index }}</span></td><td><strong>{{ metric.model_label or metric.model }}</strong>{% if loop.first %}<span class="champion-badge">Champion</span>{% endif %}</td><td><span class="model-status completed">Completed</span></td><td>{{ '%.2f%%' | format(metric.mape) }}</td><td>{{ '%.2f%%' | format(metric.accuracy) }}</td><td>{{ '%.2f' | format(metric.mae) }}</td><td>{{ '%.2f' | format(metric.rmse) }}</td><td>{{ '%.2f%%' | format(metric.wape) }}</td><td>{{ '%.2f%%' | format(metric.bias) }}</td><td>{{ '%.2fs' | format(metric.runtime_seconds or 0) }}</td></tr>{% endfor %}</tbody></table></div></section>
+
+{% if failed_models %}<section class="surface failure-panel"><div class="panel-heading"><div><h2>Failed models</h2><p>Failures remain visible and are excluded from champion selection.</p></div><span class="failure-count">{{ failed_models|length }} failed</span></div>{% for model in failed_models %}<div class="failure-row"><i data-lucide="circle-alert"></i><div><strong>{{ model.model_label or model.model }}</strong><span>{{ model.reason }}</span></div><span class="model-status failed">{{ model.status|title }}</span></div>{% endfor %}</section>{% endif %}
+
+<section class="metric-glossary">{% for title, copy in [('MAPE','Average percentage error. Primary ranking metric.'),('MAE','Average absolute miss in target units.'),('RMSE','Error measure that emphasizes larger misses.'),('WAPE','Absolute error weighted by total volume.'),('Bias','Direction and magnitude of over/under forecast.')] %}<article><span>{{ title }}</span><p>{{ copy }}</p></article>{% endfor %}</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/model_metrics.js') }}"></script>{% endblock %}

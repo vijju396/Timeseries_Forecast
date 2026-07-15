@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Forecast Data Studio | ACI Forecast Intelligence{% endblock %}
+{% block breadcrumb %}Data Studio{% endblock %}
+{% block content %}
+<section class="page-intro" data-page="dataset">
+  <div><span class="section-kicker">Intelligent data preparation</span><h1>Forecast Data Studio</h1><p>Upload, clean, enrich, train, and forecast from one intelligent workspace.</p></div>
+  <nav class="workflow-steps" aria-label="Data Studio workflow">
+    <button class="workflow-step active" type="button" data-target="upload-section"><span>1</span>Upload</button>
+    <button class="workflow-step" type="button" data-target="mapping-section" disabled title="Upload a dataset to unlock mapping"><span>2</span>Map</button>
+    <button class="workflow-step" type="button" data-target="enrichment-section" disabled title="Apply mapping to unlock enrichment"><span>3</span>Enrich</button>
+    <button class="workflow-step" type="button" data-target="training-section" disabled title="Prepare training data to unlock training"><span>4</span>Train</button>
+  </nav>
+</section>
+
+<section class="studio-grid">
+  <article class="surface upload-surface studio-section" id="upload-section">
+    <div class="panel-heading"><div><span class="panel-index">01</span><h2>Upload source data</h2><p>Start with a time-based operational dataset.</p></div><span class="format-badge">CSV / TSV / TXT / XLSX</span></div>
+    <form id="datasetUploadForm" enctype="multipart/form-data">
+      <label class="drop-zone" id="dropZone" for="datasetFile">
+        <span class="drop-icon"><i data-lucide="cloud-upload"></i></span>
+        <strong>Drop your dataset here</strong>
+        <span>or browse files from your device</span>
+        <input id="datasetFile" name="dataset_file" type="file" accept=".csv,.tsv,.txt,.xlsx" required>
+      </label>
+      <div class="upload-footer"><div id="uploadMeta" class="file-meta"><i data-lucide="file-spreadsheet"></i><span>No file selected</span></div><button class="primary-button" type="submit"><i data-lucide="arrow-up-to-line"></i>Upload dataset</button></div>
+    </form>
+    <div id="datasetStatus" class="notice neutral">Choose a supported file to begin profiling.</div>
+  </article>
+
+  <article class="surface mapping-surface studio-section" id="mapping-section">
+    <div class="panel-heading"><div><span class="panel-index">02</span><h2>Confirm data mapping</h2><p>Review the fields detected by the adapter.</p></div><span class="confidence-chip" id="mappingConfidence">Awaiting data</span></div>
+    <div id="mappingPanel" class="panel-empty"><i data-lucide="waypoints"></i><p>Column controls appear after upload.</p></div>
+  </article>
+</section>
+
+<section id="enrichment-section" class="enrichment-section studio-section">
+  <div class="section-heading"><div><span class="section-kicker">Signal intelligence</span><h2>Data quality & enrichment</h2></div><div class="quality-orbit is-hidden" id="qualityOrbit"><span id="qualityScore">--</span><small>quality score</small></div></div>
+  <div id="enrichment-empty-state" class="surface premium-empty"><i data-lucide="chart-no-axes-combined"></i><div><h3>Enrichment workspace ready</h3><p>Upload a dataset to generate enrichment insights.</p></div></div>
+  <div id="enrichment-content" class="is-hidden">
+    <div id="enrichment-cards" class="insight-grid"></div>
+    <div id="preprocessingExplanation" class="notice neutral" aria-live="polite"></div>
+    <div id="dataStudioFilters" class="mapping-form is-hidden" aria-label="Data Studio series filters"></div>
+    <div id="dataStudioAnalyticsNotice" class="notice neutral is-hidden" aria-live="polite"></div>
+    <div id="enrichment-charts" class="enrichment-grid">
+      <article class="surface chart-panel span-2"><div class="panel-heading"><div><h3>Target signal over time</h3><p>Training series after forecast-grain aggregation</p></div><i data-lucide="trending-up"></i></div><canvas id="trendChart"></canvas></article>
+      <article class="surface chart-panel"><div class="panel-heading"><div><h3>Target distribution</h3><p>Value density by range</p></div><i data-lucide="chart-bar"></i></div><canvas id="distributionChart"></canvas></article>
+      <article class="surface chart-panel"><div class="panel-heading"><div><h3>Missing values</h3><p>Raw source completeness</p></div><i data-lucide="circle-help"></i></div><canvas id="missingChart"></canvas></article>
+      <article class="surface chart-panel"><div class="panel-heading"><div><h3>Seasonality profile</h3><p>Average target by month</p></div><i data-lucide="calendar-range"></i></div><canvas id="seasonalityChart"></canvas></article>
+      <article class="surface chart-panel" id="dimensionPanel"><div class="panel-heading"><div><h3 id="dimensionTitle">Top dimensions</h3><p>Contribution to target volume</p></div><i data-lucide="layers-3"></i></div><canvas id="dimensionChart"></canvas></article>
+    </div>
+  </div>
+  <article id="previewSurface" class="surface preview-surface is-hidden"><div class="panel-heading"><div><h3>Dataset preview</h3><p>Raw records from the active upload</p></div><span class="format-badge" id="previewBadge">First 10 rows</span></div><div id="previewTable" class="table-wrap"></div></article>
+</section>
+
+<section class="surface training-console studio-section" id="training-section">
+  <div class="console-head"><div><span class="panel-index">04</span><div><h2>Full ML Training</h2><p>Rolling-origin evaluation across 13 production forecasting candidates.</p></div></div><button class="primary-button train-button" id="trainButton" type="button" disabled><i data-lucide="cpu"></i>Train Full ML Models</button></div>
+  <div id="training-panel" class="training-status"><div class="training-empty-state">Upload and map a dataset to begin Full ML Training.</div></div>
+  <div id="trainingLogPreview" class="log-preview"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/dataset.js') }}"></script>{% endblock %}

@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+Data/runtime/
+Data/uploads/
+Data/Preprocessed/
+*.log
+.DS_Store
+flask-server.log
+flask-server.err

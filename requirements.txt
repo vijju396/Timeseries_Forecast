@@ -1,0 +1,14 @@
+Flask
+gunicorn
+pandas
+numpy
+scikit-learn
+statsmodels
+pmdarima
+xgboost
+tensorflow
+openpyxl
+joblib
+matplotlib
+nbformat
+nbconvert

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}ACI Forecast Intelligence{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+  </head>
+  <body>
+    <div class="product-shell">
+      <aside class="sidebar">
+        <a class="brand" href="{{ url_for('index') }}">
+          <span class="brand-mark"><i data-lucide="sparkles"></i></span>
+          <span><strong>ACI</strong><small>Forecast Intelligence</small></span>
+        </a>
+        <nav class="side-nav" aria-label="Primary navigation">
+          <span class="nav-label">Workspace</span>
+          <a class="{{ 'active' if request.path == '/dataset' else '' }}" href="{{ url_for('dataset') }}"><i data-lucide="database"></i><span>Data Studio</span></a>
+          <a class="{{ 'active' if request.path == '/dashboard' else '' }}" href="{{ url_for('dashboard') }}"><i data-lucide="layout-dashboard"></i><span>Command Center</span></a>
+          <a class="{{ 'active' if request.path == '/forecast-explorer' else '' }}" href="{{ url_for('forecast_explorer') }}"><i data-lucide="chart-no-axes-combined"></i><span>Forecast Explorer</span></a>
+          <span class="nav-label">Model Ops</span>
+          <a class="{{ 'active' if request.path == '/model-metrics' else '' }}" href="{{ url_for('model_metrics') }}"><i data-lucide="trophy"></i><span>Model Leaderboard</span></a>
+          <a class="{{ 'active' if request.path == '/training-pipeline' else '' }}" href="{{ url_for('training_pipeline') }}"><i data-lucide="activity"></i><span>Training Monitor</span></a>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="live-dot"></span>
+          <div><strong>ML workspace online</strong><small>ACI Infotech</small></div>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="command-bar">
+          <button class="icon-button menu-toggle" type="button" aria-label="Toggle navigation"><i data-lucide="menu"></i></button>
+          <div class="breadcrumb"><span>Forecast Intelligence</span><i data-lucide="chevron-right"></i><strong>{% block breadcrumb %}Workspace{% endblock %}</strong></div>
+          <div class="command-actions"><span class="system-chip status-ready" id="systemStatus" aria-live="polite"><span class="live-dot"></span><span class="system-status-text">System ready</span></span><a class="icon-button" href="{{ url_for('training_pipeline') }}" aria-label="Training activity"><i data-lucide="bell-ring"></i></a></div>
+        </header>
+        <main class="app-canvas">{% block content %}{% endblock %}</main>
+      </div>
+    </div>
+    <script>
+      lucide.createIcons();
+      document.querySelector('.menu-toggle')?.addEventListener('click', () => document.body.classList.toggle('nav-open'));
+      window.updateSystemStatus = (status = {}) => {
+        const chip = document.getElementById('systemStatus');
+        if (!chip) return;
+        const hasFailures = (status.failed_models || []).length > 0;
+        let visualStatus = 'ready';
+        let label = 'System ready';
+        if (status.status === 'failed') {
+          visualStatus = 'failed';
+          label = 'Training failed';
+        } else if (status.status === 'running') {
+          visualStatus = 'running';
+          label = 'Training running';
+        } else if (status.status === 'completed' && hasFailures) {
+          visualStatus = 'warning';
+          label = 'Action needed';
+        } else if (status.status === 'completed') {
+          visualStatus = 'completed';
+          label = 'Training completed';
+        }
+        chip.className = `system-chip status-${visualStatus}`;
+        chip.querySelector('.system-status-text').textContent = label;
+      };
+      document.addEventListener('DOMContentLoaded', async () => {
+        try {
+          const response = await fetch('/api/training-status');
+          window.updateSystemStatus(await response.json());
+        } catch (_error) {
+          window.updateSystemStatus({ status: 'idle' });
+        }
+      });
+    </script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>
