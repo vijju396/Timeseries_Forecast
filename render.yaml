@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: timeseries-forecast
+    runtime: python
+    plan: free
+    autoDeployTrigger: commit
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 600
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: CLEAR_RUNTIME_ON_START
+        value: "true"
+      - key: FORECAST_DATA_DIR
+        value: Data/runtime
+      - key: FORECAST_TARGET_IMPUTATION
+        value: auto
+      - key: FORECAST_IMPUTATION_MAX_GAP
+        value: "3"
+      - key: FORECAST_MAX_NUMERIC_FAILURE_RATE
+        value: "0.25"
+      - key: FORECAST_MAX_PER_SERIES_MODELS
+        value: "12"
+      - key: FORECAST_XGB_N_JOBS
+        value: "1"
+      - key: RAW_PREVIEW_EXACT_COUNT_MAX_BYTES
+        value: "10485760"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: TF_NUM_INTRAOP_THREADS
+        value: "1"
+      - key: TF_NUM_INTEROP_THREADS
+        value: "1"

@@ -17,6 +17,11 @@ training_service.reset_training_state(force=True)
 app = Flask(__name__)
 
 
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
 @app.get("/")
 def index():
     return render_template("index.html", champion=metrics_service.get_champion())
