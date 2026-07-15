@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from pathlib import Path
 
 
@@ -17,6 +18,7 @@ RUNTIME_DATA_DIR = _configured_runtime_dir if _configured_runtime_dir.is_absolut
 ONEDRIVE_WARNING = ""
 _runtime_write_lock = threading.Lock()
 _RUNTIME_MEMORY = {}
+_RUNTIME_NAMESPACE = ContextVar("forecast_runtime_namespace", default="")
 DATASET_OUTPUT_FILES = {
     "enrichment.json",
     "training_status.json",
@@ -32,13 +34,13 @@ DATASET_OUTPUT_FILES = {
 def initialize_runtime_state():
     ensure_data_directories()
     if os.environ.get("CLEAR_RUNTIME_ON_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
-        clear_generated_dataset_state()
+        clear_all_generated_dataset_state()
     else:
         _cleanup_stale_temp_files()
 
 
 def _cleanup_stale_temp_files():
-    for path in RUNTIME_DATA_DIR.glob("*.tmp"):
+    for path in RUNTIME_DATA_DIR.rglob("*.tmp"):
         try:
             path.unlink(missing_ok=True)
         except OSError as exc:
@@ -48,6 +50,48 @@ def _cleanup_stale_temp_files():
 def ensure_data_directories():
     for directory in (DATA_DIR, RUNTIME_DATA_DIR, PREPROCESSED_DIR, UPLOADS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
+    for directory in (_runtime_directory(), _preprocessed_directory(), _uploads_directory()):
+        directory.mkdir(parents=True, exist_ok=True)
+
+
+def set_runtime_namespace(namespace):
+    """Bind generated state to one signed browser session or background job."""
+    value = str(namespace or "").strip()
+    if value and (len(value) > 64 or not value.replace("-", "").replace("_", "").isalnum()):
+        raise ValueError("Invalid runtime namespace.")
+    _RUNTIME_NAMESPACE.set(value)
+    return value
+
+
+def current_runtime_namespace():
+    return _RUNTIME_NAMESPACE.get()
+
+
+def _scoped_directory(directory):
+    namespace = current_runtime_namespace()
+    return Path(directory) / "sessions" / namespace if namespace else Path(directory)
+
+
+def _runtime_directory():
+    return _scoped_directory(RUNTIME_DATA_DIR)
+
+
+def _preprocessed_directory():
+    return _scoped_directory(PREPROCESSED_DIR)
+
+
+def _uploads_directory():
+    return _scoped_directory(UPLOADS_DIR)
+
+
+def _memory_key(filename):
+    return (current_runtime_namespace() or "__global__", filename)
+
+
+def _clear_namespace_memory():
+    namespace = current_runtime_namespace() or "__global__"
+    for key in [key for key in _RUNTIME_MEMORY if key[0] == namespace]:
+        _RUNTIME_MEMORY.pop(key, None)
 
 
 def _is_project_child(path, allow_project_root=False):
@@ -79,7 +123,15 @@ def _remove_generated_contents(directory):
 
 
 def clear_generated_dataset_state():
-    """Remove only generated dataset/runtime state inside this project."""
+    """Remove generated state owned by the current browser session."""
+    _remove_generated_contents(_runtime_directory())
+    _remove_generated_contents(_uploads_directory())
+    _remove_generated_contents(_preprocessed_directory())
+    _clear_namespace_memory()
+
+
+def clear_all_generated_dataset_state():
+    """Startup-only cleanup of all generated state inside this project."""
     _remove_generated_contents(RUNTIME_DATA_DIR)
     _remove_generated_contents(UPLOADS_DIR)
     _remove_generated_contents(PREPROCESSED_DIR)
@@ -91,20 +143,24 @@ def clear_generated_dataset_state():
 
 def clear_runtime_json(exclude=None):
     excluded = set(exclude or ())
-    RUNTIME_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for path in RUNTIME_DATA_DIR.glob("*.json"):
+    runtime_directory = _runtime_directory()
+    runtime_directory.mkdir(parents=True, exist_ok=True)
+    for path in runtime_directory.glob("*.json"):
         if path.name not in excluded:
             path.unlink(missing_ok=True)
+            _RUNTIME_MEMORY.pop(_memory_key(path.name), None)
 
 
 def clear_dataset_outputs():
     for filename in DATASET_OUTPUT_FILES:
         data_path(filename).unlink(missing_ok=True)
+        _RUNTIME_MEMORY.pop(_memory_key(filename), None)
 
 
 def clear_active_runtime_state():
     clear_dataset_outputs()
     data_path("current_dataset.json").unlink(missing_ok=True)
+    _RUNTIME_MEMORY.pop(_memory_key("current_dataset.json"), None)
 
 
 def activate_dataset(dataset_id):
@@ -118,38 +174,42 @@ def current_dataset_id():
 
 
 def data_path(filename):
-    RUNTIME_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return RUNTIME_DATA_DIR / filename
+    directory = _runtime_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / filename
 
 
 def preprocessed_path(filename):
-    PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    return PREPROCESSED_DIR / filename
+    directory = _preprocessed_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / filename
 
 
 def uploads_path(filename=""):
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    return UPLOADS_DIR / filename
+    directory = _uploads_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / filename
 
 
 def load_json(filename, default=None):
     path = data_path(filename)
+    memory_key = _memory_key(filename)
     if not path.exists():
-        return _RUNTIME_MEMORY.get(filename, default if default is not None else {})
+        return _RUNTIME_MEMORY.get(memory_key, default if default is not None else {})
 
     try:
         with path.open("r", encoding="utf-8") as handle:
             value = json.load(handle)
-            _RUNTIME_MEMORY[filename] = value
+            _RUNTIME_MEMORY[memory_key] = value
             return value
     except (OSError, ValueError):
-        return _RUNTIME_MEMORY.get(filename, default if default is not None else {})
+        return _RUNTIME_MEMORY.get(memory_key, default if default is not None else {})
 
 
 def save_json(filename, payload):
     path = data_path(filename)
     safe_write_json(path, payload)
-    _RUNTIME_MEMORY[filename] = payload
+    _RUNTIME_MEMORY[_memory_key(filename)] = payload
     return payload
 
 

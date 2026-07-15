@@ -9,7 +9,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
-from services.data_service import DATA_DIR, current_dataset_id, load_json, preprocessed_path, save_json
+from services.data_service import DATA_DIR, current_dataset_id, current_runtime_namespace, load_json, preprocessed_path, save_json, set_runtime_namespace
 from services.metrics_service import calculate_metrics, is_valid_metric
 from services.series_service import aggregate_series_identity, row_series_identity, series_count
 
@@ -37,7 +37,19 @@ MODEL_SPECS = [
 _THREAD_LOCK = threading.Lock()
 _STATUS_LOCK = threading.Lock()
 _TRAINING_THREAD = None
-_IN_MEMORY_STATUS = {}
+_IN_MEMORY_STATUSES = {}
+
+
+def _status_namespace_key():
+    return current_runtime_namespace() or "__global__"
+
+
+def _memory_status():
+    return _IN_MEMORY_STATUSES.get(_status_namespace_key())
+
+
+def _clear_memory_status():
+    _IN_MEMORY_STATUSES.pop(_status_namespace_key(), None)
 
 
 class TrainingValidationError(ValueError):
@@ -56,7 +68,7 @@ def _job_is_current(dataset_id, job_id):
     if dataset_id != current_dataset_id():
         return False
     with _STATUS_LOCK:
-        active_job = _IN_MEMORY_STATUS.get("job_id")
+        active_job = (_memory_status() or {}).get("job_id")
     return active_job in (None, job_id)
 
 
@@ -88,7 +100,7 @@ def reset_training_state(force=False):
     if not force:
         reject_if_training_active()
     with _STATUS_LOCK:
-        _IN_MEMORY_STATUS.clear()
+        _clear_memory_status()
     _TRAINING_THREAD = None
 
 
@@ -134,20 +146,27 @@ def start_background_training(dataset_mapping=None):
         job_id = uuid.uuid4().hex
         _set_dataset_phase(dataset_id, "training", job_id)
         with _STATUS_LOCK:
-            _IN_MEMORY_STATUS.clear()
+            _clear_memory_status()
         _write_status(_initial_status(dataset_id=dataset_id, job_id=job_id, artifact_id=adapted.get("artifact_id")))
+        runtime_namespace = current_runtime_namespace()
         _TRAINING_THREAD = threading.Thread(
-            target=run_real_training_pipeline,
-            args=(dataset_mapping, dataset_id, job_id, adapted.get("artifact_id")),
+            target=_run_training_in_namespace,
+            args=(runtime_namespace, dataset_mapping, dataset_id, job_id, adapted.get("artifact_id")),
             daemon=True,
         )
         _TRAINING_THREAD.start()
         return get_training_status()
 
 
+def _run_training_in_namespace(runtime_namespace, dataset_mapping, dataset_id, job_id, artifact_id):
+    set_runtime_namespace(runtime_namespace)
+    return run_real_training_pipeline(dataset_mapping, dataset_id, job_id, artifact_id)
+
+
 def get_training_status():
     with _STATUS_LOCK:
-        status = copy.deepcopy(_IN_MEMORY_STATUS) if _IN_MEMORY_STATUS else None
+        memory_status = _memory_status()
+        status = copy.deepcopy(memory_status) if memory_status else None
     if status is None:
         try:
             status = load_json("training_status.json", _idle_status())
@@ -1767,8 +1786,7 @@ def _write_status(status):
 
 def _set_memory_status(status):
     with _STATUS_LOCK:
-        _IN_MEMORY_STATUS.clear()
-        _IN_MEMORY_STATUS.update(copy.deepcopy(status))
+        _IN_MEMORY_STATUSES[_status_namespace_key()] = copy.deepcopy(status)
 
 
 def _write_log(entries, dataset_id=None, job_id=None):

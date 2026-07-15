@@ -1,6 +1,8 @@
 import os
+import secrets
+import uuid
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
 
 from services import dataset_adapter, drift_service, enrichment_service, forecast_service, metrics_service, training_service, upload_service
 from services.raw_preview_service import RawPreviewError
@@ -9,12 +11,27 @@ from services.data_service import (
     current_dataset_id,
     initialize_runtime_state,
     load_json,
+    set_runtime_namespace,
 )
 
 
 initialize_runtime_state()
 training_service.reset_training_state(force=True)
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+
+
+@app.before_request
+def bind_browser_runtime():
+    if request.endpoint == "health":
+        set_runtime_namespace("")
+        return
+    namespace = session.get("runtime_namespace")
+    if not namespace:
+        namespace = uuid.uuid4().hex
+        session["runtime_namespace"] = namespace
+    set_runtime_namespace(namespace)
 
 
 @app.get("/health")

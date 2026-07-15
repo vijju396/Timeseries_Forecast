@@ -126,6 +126,15 @@ def main():
         assert not adapt_calls, "Train remapped an already enriched dataset"
         metrics = json.loads(data_service.data_path("model_metrics.json").read_text(encoding="utf-8"))
         assert metrics and all(row["dataset_id"] == dataset_id and row["job_id"] == start_payload["job_id"] for row in metrics)
+
+        # A fresh browser must not inherit another browser's dataset or trained outputs.
+        other_client = app.app.test_client()
+        assert other_client.get("/api/current-dataset").get_json()["available"] is False
+        assert other_client.get("/api/enrichment").get_json()["available"] is False
+        assert other_client.get("/training-status").get_json()["available"] is False
+        assert other_client.get("/api/forecast").status_code == 409
+        assert client.get("/api/current-dataset").get_json()["dataset_id"] == dataset_id
+
         repeated = client.post("/train", json={"dataset_id": dataset_id})
         assert repeated.status_code == 202, repeated.get_json()
         repeated_status = _wait_for_terminal(client, dataset_id, repeated.get_json()["job_id"])
