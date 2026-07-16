@@ -108,7 +108,13 @@ def main(full_training=False):
             },
         )
         assert analytics.status_code == 200
-        assert analytics.get_json()["matched_row_count"] == 396
+        analytics_payload = analytics.get_json()
+        assert analytics_payload["matched_row_count"] == 396
+        contributions = analytics_payload["analytics"]["top_dimensions"]
+        assert [dimension["id"] for dimension in contributions] == ["dimension_1", "dimension_2"]
+        assert [dimension["display_name"] for dimension in contributions] == ["department", "facility_id"]
+        assert contributions[0]["values"] == [{"label": "Certified Nursing Assistant", "value": 4352.0}]
+        assert contributions[1]["values"] == [{"label": "155234", "value": 4352.0}]
 
         for path in ("/", "/dataset", "/dashboard", "/training-pipeline", "/model-metrics", "/forecast-explorer"):
             response = client.get(path)

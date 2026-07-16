@@ -6,7 +6,7 @@ from pathlib import Path
 from services.data_service import save_json
 
 
-DATA_STUDIO_ANALYTICS_SCHEMA_VERSION = "data-studio-analytics-v1"
+DATA_STUDIO_ANALYTICS_SCHEMA_VERSION = "data-studio-analytics-v2"
 MISSING_DIMENSION_TOKEN = "__data_studio_missing__"
 
 
@@ -342,9 +342,15 @@ def _empty_analytics():
 
 
 def _top_dimension(frame, column):
-    if column not in frame or frame[column].nunique() <= 1:
+    import pandas as pd
+
+    if column not in frame or "Click Count" not in frame or frame.empty:
         return []
-    grouped = frame.groupby(column, as_index=False)["Click Count"].sum().nlargest(8, "Click Count")
+    contribution = frame[[column, "Click Count"]].copy()
+    contribution[column] = contribution[column].map(
+        lambda value: "(Missing)" if pd.isna(value) else str(value)
+    )
+    grouped = contribution.groupby(column, as_index=False, dropna=False)["Click Count"].sum().nlargest(8, "Click Count")
     return [{"label": str(row[0]), "value": _round(row[1])} for row in grouped.itertuples(index=False, name=None)]
 
 
@@ -352,12 +358,15 @@ def _top_mapped_dimensions(frame, dimension_schema):
     result = []
     for dimension in dimension_schema or []:
         column = dimension.get("canonical_column")
-        if not column or column not in frame or frame[column].nunique(dropna=False) <= 1:
+        if not column or column not in frame or frame.empty:
+            continue
+        values = _top_dimension(frame, column)
+        if not values:
             continue
         result.append({
             "id": dimension.get("id"),
             "display_name": dimension.get("display_name") or dimension.get("source_column") or dimension.get("id"),
-            "values": _top_dimension(frame, column),
+            "values": values,
         })
     return result
 

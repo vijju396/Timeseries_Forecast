@@ -44,6 +44,10 @@ def main():
 
         one_dimension = build_data_studio_analytics(_dataset(path, dimensions[:1]), {"dimensions": json.dumps({"dimension_1": "Africa"})})
         assert len(one_dimension["dimension_schema"]) == 1 and one_dimension["matched_row_count"] == 1
+        assert one_dimension["analytics"]["top_dimensions"] == [{
+            "id": "dimension_1", "display_name": "Region",
+            "values": [{"label": "Africa", "value": 40.0}],
+        }]
 
         invalid = build_data_studio_analytics(dataset, {"dimensions": json.dumps({"dimension_1": "Asia-Pacific", "dimension_2": "South Africa"})})
         assert invalid["available"] is False and invalid["code"] == "no_data" and invalid["analytics"]["trend"] == []
@@ -59,7 +63,8 @@ def main():
         missing = build_data_studio_analytics(typed_dataset, {"dimensions": json.dumps({"dimension_1": "20", "dimension_2": MISSING_DIMENSION_TOKEN})})
         assert [item["label"] for item in numeric["dimension_schema"][1]["values"]] == ["München", "東京"]
         assert missing["matched_row_count"] == 1 and missing["analytics"]["trend"][0]["value"] == 3
-    print("data studio filter tests passed: 11")
+        assert missing["analytics"]["top_dimensions"][1]["values"] == [{"label": "(Missing)", "value": 3.0}]
+    print("data studio filter tests passed: 13")
 
 
 if __name__ == "__main__":
