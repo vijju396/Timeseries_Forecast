@@ -130,6 +130,8 @@ def main(full_training=False):
         assert status.get("forecast_ready") is True
         assert status.get("rows_used_for_training") == 396
         assert len(status.get("completed_models") or []) >= 8
+        failed_model_ids = {row.get("model") for row in status.get("failed_models") or []}
+        assert not failed_model_ids.intersection({"var_Predictions", "var_exog_Predictions"})
 
         forecast = client.get("/api/forecast", query_string={"horizon": "30 days", "granularity": "Daily"})
         assert forecast.status_code == 200, forecast.get_data(as_text=True)

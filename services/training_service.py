@@ -574,12 +574,15 @@ def _model_eligibility(model_id, fitter_name, training_df, dependency_registry=N
             "reason_code": "dependency_unavailable",
             "reason": f"{module} is not installed in the active server environment: {dependency.get('import_error') or 'import unavailable'}.",
         }
-    if model_id in {"var_Predictions", "var_exog_Predictions"} and len(_endogenous_columns(training_df)) < 2:
-        return {
-            "eligible": False,
-            "reason_code": "insufficient_endogenous_series",
-            "reason": "VAR requires at least two aligned mapped target series.",
-        }
+    if model_id in {"var_Predictions", "var_exog_Predictions"}:
+        try:
+            _prepare_var_endog(training_df)
+        except ValueError as exc:
+            return {
+                "eligible": False,
+                "reason_code": "insufficient_dynamic_endogenous_series",
+                "reason": str(exc),
+            }
     return {"eligible": True, "reason_code": None, "reason": None}
 
 
@@ -1122,32 +1125,26 @@ def _exp_forecast(train_df, output_df, seasonal, damped):
 def _fit_var(train_df, output_df):
     from statsmodels.tsa.api import VAR
 
-    endog = _var_endog(train_df)
-    if endog.shape[1] < 2:
-        raise ValueError("VAR requires at least two numeric time-series columns.")
-    maxlags = min(7, max(1, len(endog) // 10))
+    endog, constant_total = _prepare_var_endog(train_df)
+    maxlags = _var_lag_order(endog)
     model = VAR(endog).fit(maxlags=maxlags, ic=None, trend="c")
     lag_order = model.k_ar
     forecast_input = endog.values[-lag_order:]
-    return model.forecast(forecast_input, steps=len(output_df)).sum(axis=1)
+    return model.forecast(forecast_input, steps=len(output_df)).sum(axis=1) + constant_total
 
 
 def _fit_var_exog(train_df, output_df):
-    from statsmodels.tsa.statespace.varmax import VARMAX
+    from statsmodels.tsa.api import VAR
 
     exog_train, exog_future = _exog_pair(train_df, output_df)
-    endog = _var_endog(train_df)
-    if endog.shape[1] < 2:
-        raise ValueError("VAR exogenous model requires at least two endogenous series.")
-    model = VARMAX(
-        endog,
-        exog=exog_train,
-        order=(1, 0),
-        trend="c",
-        enforce_stationarity=False,
-    ).fit(disp=False, maxiter=100)
-    forecast = model.forecast(steps=len(output_df), exog=exog_future)
-    return forecast.sum(axis=1)
+    endog, constant_total = _prepare_var_endog(train_df)
+    exog_train, exog_future = _prepare_var_exog(exog_train, exog_future)
+    maxlags = _var_lag_order(endog, exog_train.shape[1])
+    model = VAR(endog, exog=exog_train).fit(maxlags=maxlags, ic=None, trend="c")
+    lag_order = model.k_ar
+    forecast_input = endog.values[-lag_order:]
+    forecast = model.forecast(forecast_input, steps=len(output_df), exog_future=exog_future)
+    return forecast.sum(axis=1) + constant_total
 
 
 def _fit_lstm(train_df, output_df):
@@ -1834,6 +1831,63 @@ def _encoded_source_exog(row, schema, require_values=False):
 def _var_endog(df):
     columns = _endogenous_columns(df)
     return df[columns].astype(float) if len(columns) >= 2 else df[["target"]].astype(float)
+
+
+def _prepare_var_endog(df):
+    """Return aligned, non-constant VAR series and the excluded constant baseline."""
+    import numpy as np
+
+    endog = _var_endog(df).reset_index(drop=True)
+    values = endog.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("VAR requires finite, aligned values for every endogenous series.")
+    constant_columns = [column for column in endog if endog[column].nunique(dropna=False) <= 1]
+    constant_total = float(endog[constant_columns].iloc[-1].sum()) if constant_columns else 0.0
+    dynamic = endog.drop(columns=constant_columns)
+    if dynamic.shape[1] < 2:
+        raise ValueError("VAR requires at least two non-constant aligned target series.")
+    return dynamic, constant_total
+
+
+def _prepare_var_exog(train, future):
+    """Scale exogenous inputs and remove constant or linearly dependent columns."""
+    import numpy as np
+    import pandas as pd
+
+    train = train.reset_index(drop=True).astype(float)
+    future = future.reset_index(drop=True).reindex(columns=train.columns).astype(float)
+    varying_columns = [column for column in train if train[column].nunique(dropna=False) > 1]
+    if not varying_columns:
+        raise ValueError("VAR with exogenous variables requires at least one varying exogenous feature.")
+
+    train = train[varying_columns]
+    future = future[varying_columns]
+    center = train.mean(axis=0)
+    scale = train.std(axis=0, ddof=0).replace(0, 1.0)
+    train = (train - center) / scale
+    future = (future - center) / scale
+
+    selected = []
+    current = np.empty((len(train), 0), dtype=float)
+    for column in train.columns:
+        candidate = np.column_stack([current, train[column].to_numpy(dtype=float)])
+        if np.linalg.matrix_rank(candidate) > len(selected):
+            selected.append(column)
+            current = candidate
+    if not selected:
+        raise ValueError("VAR exogenous features are constant or perfectly collinear.")
+    if not np.isfinite(current).all() or not np.isfinite(future[selected].to_numpy(dtype=float)).all():
+        raise ValueError("VAR exogenous features contain non-finite values after preprocessing.")
+    return pd.DataFrame(current, columns=selected), future[selected].reset_index(drop=True)
+
+
+def _var_lag_order(endog, exog_count=0):
+    """Choose a lag order that leaves enough observations for a stable OLS solve."""
+    preferred = min(7, max(1, len(endog) // 10))
+    max_supported = (len(endog) - int(exog_count) - 2) // (endog.shape[1] + 1)
+    if max_supported < 1:
+        raise ValueError("VAR does not have enough observations for the available series and features.")
+    return min(preferred, max_supported)
 
 
 def _endogenous_columns(df):
