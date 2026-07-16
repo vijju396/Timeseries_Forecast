@@ -139,7 +139,7 @@ def main(full_training=False):
         generated_model_ids = {row.get("model_id") for row in manifest.get("models") or [] if row.get("status") == "generated"}
         assert generated_model_ids == completed_model_ids
 
-        forecast = client.get("/api/forecast", query_string={"horizon": "30 days", "granularity": "Daily"})
+        forecast = client.get("/api/forecast", query_string={"horizon": "32 days", "granularity": "Daily"})
         assert forecast.status_code == 200, forecast.get_data(as_text=True)
         forecast_payload = forecast.get_json()
         assert forecast_payload["ok"] is True
@@ -147,7 +147,7 @@ def main(full_training=False):
         assert forecast_payload["metadata"]["target_unit"] == "staff members"
         assert forecast_payload["metadata"]["last_actual_timestamp"] == "2026-01-31"
         assert forecast_payload["metadata"]["first_future_timestamp"] == "2026-02-01"
-        assert len(forecast_payload["future_prediction"]) == 30
+        assert len(forecast_payload["future_prediction"]) == 32
         assert forecast_payload["metadata"]["future_prediction_count"] == len(forecast_payload["future_prediction"])
         assert all(point["value"] is not None for point in forecast_payload["future_prediction"])
         assert client.get("/api/models").get_json()

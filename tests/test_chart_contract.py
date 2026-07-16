@@ -45,6 +45,8 @@ def main():
     assert "Major backtest errors" in explorer and "largestErrorPoints" in explorer
     assert "forecastExplorerVisibility" in explorer
     assert 'setText("summaryPoints", futurePredictionPoints.length)' in explorer
+    assert "option.label == filter_options.default_horizon" in explorer_template
+    assert "option.label == '30 days'" not in explorer_template
     assert "Actual, backtest & forecast" in explorer_template and "Actual, fitted & forecast" not in explorer_template
     assert 'id="preprocessingExplanation"' in dataset_template
     assert dataset_template.index('id="preprocessingExplanation"') < dataset_template.index('id="dataStudioFilters"') < dataset_template.index('id="trendChart"')

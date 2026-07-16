@@ -40,6 +40,16 @@ def test_forecast_filter_ui_is_dynamic_and_prediction_ownership_is_strict():
     assert not forecast_service._row_owned_by_payload({"dataset_id": "d"}, payload)
 
 
+def test_daily_forecast_defaults_to_32_points():
+    spec = forecast_service._horizon_spec({}, "Daily")
+    explicit = forecast_service._horizon_spec(
+        {"horizon_value": "32", "horizon_unit": "days"}, "Daily"
+    )
+    assert spec == {"value": 32, "unit": "days", "points": 32, "label": "32 days"}
+    assert explicit == spec
+    assert (32, "days") in forecast_service.HORIZONS_BY_GRANULARITY["Daily"]
+
+
 def test_four_filter_combinations_change_the_response(monkeypatch, tmp_path):
     rows = []
     for day in pd.date_range("2024-01-01", periods=12, freq="D"):
@@ -47,7 +57,7 @@ def test_four_filter_combinations_change_the_response(monkeypatch, tmp_path):
             rows.append({"Date": day, "Click Count": base + day.day, "Store": store, "Item": item})
     cleaned = tmp_path / "cleaned_training_input.csv"
     pd.DataFrame(rows).to_csv(cleaned, index=False)
-    dates = [day.date().isoformat() for day in pd.date_range("2024-01-13", periods=12, freq="D")]
+    dates = [day.date().isoformat() for day in pd.date_range("2024-01-13", periods=40, freq="D")]
     dimension_schema = [
         {"id": "dimension_1", "canonical_column": "Store", "source_column": "store_source", "display_name": "Location"},
         {"id": "dimension_2", "canonical_column": "Item", "source_column": "product_source", "display_name": "Product"},
@@ -96,6 +106,11 @@ def test_four_filter_combinations_change_the_response(monkeypatch, tmp_path):
     warm_response = forecast_service.get_forecast({**combos[0], "dataset_id": "dataset-test"})
     warm_ms = (time.perf_counter() - warm_start) * 1000
     assert cold_response["cache_key"] == warm_response["cache_key"]
+    default_params = {key: value for key, value in combos[0].items() if key != "horizon"}
+    default_response = forecast_service.get_forecast({**default_params, "dataset_id": "dataset-test"})
+    assert default_response["filters"]["horizon"] == "32 days"
+    assert len(default_response["future_prediction"]) == 32
+    assert default_response["metadata"]["future_prediction_count"] == 32
     responses = [cold_response, forecast_service.get_forecast({**combos[1], "dataset_id": "dataset-test"}), forecast_service.get_forecast({**combos[2], "dataset_id": "dataset-test"}), forecast_service.get_forecast({**combos[3], "dataset_id": "dataset-test"})]
     assert [response["filters"]["model_id"] for response in responses] == ["model_a", "model_a", "model_a", "model_b"]
     assert responses[0]["effective"]["matched_rows"] == 5
@@ -415,6 +430,7 @@ def test_model_resolution_restores_aggregate_champion(tmp_path):
     assert all(row["model_id"] == "exp_additive" for row in series_response["historical_prediction"] + series_response["future_prediction"])
     assert series_response["cache_key"] != aggregate_response["cache_key"]
 if __name__ == "__main__":
+    test_daily_forecast_defaults_to_32_points()
     with tempfile.TemporaryDirectory() as directory:
         patcher = _Patch()
         try:

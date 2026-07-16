@@ -21,17 +21,20 @@ DEFAULT_FILTERS = {
     "stores": ["All Stores"],
     "items": ["All Items"],
     "granularities": ["Daily", "Weekly", "Monthly"],
-    "horizons": ["7 days", "14 days", "30 days", "60 days", "90 days", "4 weeks", "13 weeks", "26 weeks", "52 weeks", "6 months", "12 months", "18 months", "24 months"],
+    "horizons": ["7 days", "14 days", "30 days", "32 days", "60 days", "90 days", "4 weeks", "13 weeks", "26 weeks", "52 weeks", "6 months", "12 months", "18 months", "24 months"],
     "start_date": "",
     "end_date": "",
 }
 HORIZONS_BY_GRANULARITY = {
     "Hourly": [(24, "hours"), (48, "hours"), (7, "days"), (14, "days")],
-    "Daily": [(7, "days"), (14, "days"), (30, "days"), (60, "days"), (90, "days"), (4, "weeks"), (13, "weeks"), (26, "weeks"), (52, "weeks")],
+    "Daily": [(7, "days"), (14, "days"), (30, "days"), (32, "days"), (60, "days"), (90, "days"), (4, "weeks"), (13, "weeks"), (26, "weeks"), (52, "weeks")],
     "Weekly": [(4, "weeks"), (13, "weeks"), (26, "weeks"), (52, "weeks")],
     "Monthly": [(6, "months"), (12, "months"), (18, "months"), (24, "months")],
     "Quarterly": [(4, "quarters"), (8, "quarters"), (12, "quarters")],
     "Yearly": [(1, "years"), (2, "years"), (3, "years")],
+}
+DEFAULT_HORIZON_BY_GRANULARITY = {
+    "Daily": (32, "days"),
 }
 FORECAST_RESPONSE_SCHEMA_VERSION = "forecast-explorer-v3"
 
@@ -53,6 +56,8 @@ def get_filter_options():
     ]
     filters["horizons_by_granularity"] = _horizon_options()
     filters["horizons"] = [row["label"] for row in filters["horizons_by_granularity"].get("Daily", [])]
+    default_value, default_unit = DEFAULT_HORIZON_BY_GRANULARITY["Daily"]
+    filters["default_horizon"] = f"{default_value} {default_unit}"
     aggregate_hash = aggregate_series_identity()["series_key_hash"]
     filters["model_options"] = _model_options(payload, aggregate_hash)
     filters["global_champion"] = _global_champion_metadata(payload, filters["model_options"])
@@ -662,7 +667,9 @@ def _horizon_spec(params, granularity):
     else:
         text = params.get("future_horizon") or params.get("horizon")
         if not text:
-            value, unit = HORIZONS_BY_GRANULARITY[granularity][0]
+            value, unit = DEFAULT_HORIZON_BY_GRANULARITY.get(
+                granularity, HORIZONS_BY_GRANULARITY[granularity][0]
+            )
         else:
             match = re.fullmatch(r"\s*(\d+)\s+([a-zA-Z]+)\s*", str(text))
             if not match:

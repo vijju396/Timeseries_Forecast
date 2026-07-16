@@ -1553,7 +1553,7 @@ def _forecast_payload(prediction_frame, metrics, dataset_info, cleaned_df, frequ
             "stores": stores,
             "items": items,
             "granularities": ["Daily", "Weekly", "Monthly"],
-            "horizons": ["7 days", "14 days", "30 days", "60 days", "90 days", "4 weeks", "13 weeks", "26 weeks", "52 weeks", "6 months", "12 months", "18 months", "24 months"],
+            "horizons": ["7 days", "14 days", "30 days", "32 days", "60 days", "90 days", "4 weeks", "13 weeks", "26 weeks", "52 weeks", "6 months", "12 months", "18 months", "24 months"],
             "start_date": historical[0]["date"] if historical else None,
             "end_date": last_actual_date,
         },
