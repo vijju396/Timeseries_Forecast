@@ -14,7 +14,6 @@ def main():
     dataset_template = (ROOT / "templates/dataset.html").read_text(encoding="utf-8")
     dataset_script = (ROOT / "static/js/dataset.js").read_text(encoding="utf-8")
     training_template = (ROOT / "templates/training_pipeline.html").read_text(encoding="utf-8")
-    dashboard = (ROOT / "static/js/dashboard.js").read_text(encoding="utf-8")
     explorer = (ROOT / "static/js/forecast_explorer.js").read_text(encoding="utf-8")
     assert 'indexAxis: "x"' in ranking
     assert 'text: "Model"' in ranking and 'text: "MAPE %"' in ranking
@@ -26,8 +25,9 @@ def main():
     assert 'AbortController' in explorer_script and 'requestSequence' in explorer_script and 'drift.request_id' in explorer_script
     assert 'forecastDriftChart' not in command_template and 'forecastDriftChart' not in command_script
     assert 'driftChart' not in template and 'api/drift' not in (ROOT / "static/js/model_metrics.js").read_text(encoding="utf-8")
-    assert 'label: "Actual manpower required"' in dashboard and 'label: "Historical backtest"' in dashboard and 'label: "Future manpower required"' in dashboard
-    assert "data-dashboard-dimension" in command_template and 'filterState.dimensions = JSON.stringify(dimensions)' in dashboard
+    assert all(chart_id not in command_template for chart_id in ("actualPredictedChart", "mapeChart", "confidenceChart"))
+    assert "Actual, backtest & future manpower forecast" not in command_template and "MAPE leaderboard" not in command_template and "Forecast confidence" not in command_template
+    assert "dashboard.js" not in command_template
     assert 'label: "Actual"' in explorer and 'label: "Historical Prediction"' in explorer and 'label: "Future Prediction"' in explorer
     assert 'toPoints(data.historical_actual || [], "actual")' in explorer
     assert 'toPoints(data.historical_prediction || [], "historical")' in explorer
@@ -44,6 +44,7 @@ def main():
     assert "Absolute error:" in explorer and "Percentage error:" in explorer and "Forecast origin:" in explorer
     assert "Major backtest errors" in explorer and "largestErrorPoints" in explorer
     assert "forecastExplorerVisibility" in explorer
+    assert 'setText("summaryPoints", futurePredictionPoints.length)' in explorer
     assert "Actual, backtest & forecast" in explorer_template and "Actual, fitted & forecast" not in explorer_template
     assert 'id="preprocessingExplanation"' in dataset_template
     assert dataset_template.index('id="preprocessingExplanation"') < dataset_template.index('id="dataStudioFilters"') < dataset_template.index('id="trendChart"')

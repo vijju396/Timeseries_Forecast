@@ -148,6 +148,7 @@ def main(full_training=False):
         assert forecast_payload["metadata"]["last_actual_timestamp"] == "2026-01-31"
         assert forecast_payload["metadata"]["first_future_timestamp"] == "2026-02-01"
         assert len(forecast_payload["future_prediction"]) == 30
+        assert forecast_payload["metadata"]["future_prediction_count"] == len(forecast_payload["future_prediction"])
         assert all(point["value"] is not None for point in forecast_payload["future_prediction"])
         assert client.get("/api/models").get_json()
         print(

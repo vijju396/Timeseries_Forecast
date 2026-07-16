@@ -325,7 +325,7 @@ if (forecastExplorerRoot) {
     setText("summaryMape", backtest.wape == null ? "--" : formatPercent(backtest.wape));
     setText("summaryAccuracy", data.metadata?.historical_prediction_displayed_count ?? 0);
     setText("summaryVariance", `${backtest.coverage_percentage ?? 0}%`);
-    setText("summaryPoints", data.metadata?.future_prediction_count ?? 0);
+    setText("summaryPoints", futurePredictionPoints.length);
     setText("seasonalitySummary", data.seasonality?.summary || "--");
     setText("seasonalityDetail", `Strength ${data.seasonality?.strength ?? 0}%`);
     setText("explanationDirection", data.explanation?.direction || "--");

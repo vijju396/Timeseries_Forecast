@@ -2,21 +2,6 @@
 {% block title %}Healthcare Command Center | ACI Healthcare Workforce Forecast{% endblock %}
 {% block breadcrumb %}Command Center{% endblock %}
 {% block content %}
-<section class="page-intro compact" data-page="dashboard"><div><span class="section-kicker">Healthcare workforce intelligence</span><h1>Manpower Forecast Command Center</h1><p>Staffing requirements, model performance, confidence, and forward operational risk in one view.</p></div><span class="status-chip"><span class="live-dot"></span>Latest trained output</span></section>
-<form class="control-deck" id="dashboardFilters">
-  <label>Dataset<select name="dataset">{% for option in filter_options.datasets %}<option>{{ option }}</option>{% endfor %}</select></label>
-  <label class="date-control">Historical range<span><input type="date" name="startDate" value="{{ filter_options.start_date }}"><input type="date" name="endDate" value="{{ filter_options.end_date }}"></span></label>
-  {% for dimension in filter_options.dimensions %}<label>{{ dimension.label }}<select name="{{ dimension.id }}" data-dashboard-dimension><option value="">All {{ dimension.label }}</option>{% for option in dimension['values'] %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>{% endfor %}
-  <label>Grain<select name="granularity">{% for option in filter_options.granularities %}<option>{{ option }}</option>{% endfor %}</select></label>
-  <label>Horizon<select name="horizon">{% for option in filter_options.horizons %}<option {{ 'selected' if option == '30 days' else '' }}>{{ option }}</option>{% endfor %}</select></label>
-  <label>Model<select name="model">{% if filter_options.model_options %}{% for option in filter_options.model_options %}<option value="{{ option.model_id }}" {{ 'selected' if option.model_id == filter_options.global_champion.model_id else '' }}>{{ option.display_name }}</option>{% endfor %}{% else %}{% for option in filter_options.models %}<option>{{ option }}</option>{% endfor %}{% endif %}</select></label>
-  <button class="icon-button refresh-button filter-button" type="button" aria-label="Refresh charts"><i data-lucide="refresh-cw"></i></button>
-</form>
+<section class="page-intro compact" data-page="dashboard"><div><span class="section-kicker">Healthcare workforce intelligence</span><h1>Manpower Forecast Command Center</h1><p>Key staffing, model-performance, and data-quality indicators from the latest trained output.</p></div><span class="status-chip"><span class="live-dot"></span>Latest trained output</span></section>
 <section class="kpi-grid" id="kpiGrid">{% for kpi in kpis %}<article class="kpi-card {{ 'featured' if kpi.label in ['Best Model', 'Forecast Accuracy', 'Data Quality Score'] else '' }}"><span>{{ kpi.label }}</span><strong>{{ kpi.value }}</strong><small>{{ kpi.caption }}</small></article>{% endfor %}</section>
-<section class="analytics-grid">
-  <article class="surface chart-panel span-2"><div class="panel-heading"><div><span class="section-kicker">Staffing requirement timeline</span><h2>Actual, backtest & future manpower forecast</h2></div><div class="legend-hint"><span class="actual-dot"></span>History <span class="forecast-dot"></span>Future</div></div><canvas id="actualPredictedChart"></canvas></article>
-  <article class="surface chart-panel"><div class="panel-heading"><div><span class="section-kicker">Model evidence</span><h2>MAPE leaderboard</h2></div><span class="champion-badge">Lower is better</span></div><canvas id="mapeChart"></canvas></article>
-  <article class="surface chart-panel"><div class="panel-heading"><div><span class="section-kicker">Forward uncertainty</span><h2>Forecast confidence</h2></div><span id="forecastDateBadge" class="format-badge">Future only</span></div><canvas id="confidenceChart"></canvas></article>
-</section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>{% endblock %}
