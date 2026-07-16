@@ -126,12 +126,18 @@ def main(full_training=False):
         while status.get("status") not in terminal and time.monotonic() < deadline:
             time.sleep(1)
             status = client.get("/training-status").get_json()
-        assert status.get("status") in {"completed", "completed_with_warnings"}, status
+        assert status.get("status") == "completed", status
         assert status.get("forecast_ready") is True
         assert status.get("rows_used_for_training") == 396
         assert len(status.get("completed_models") or []) >= 8
         failed_model_ids = {row.get("model") for row in status.get("failed_models") or []}
         assert not failed_model_ids.intersection({"var_Predictions", "var_exog_Predictions"})
+        assert status.get("artifact_warnings") == []
+        assert status.get("forecasts_skipped") == 0
+        manifest = data_service.load_json("forecast_manifest.json", {})
+        completed_model_ids = {row.get("model") for row in status.get("completed_models") or []}
+        generated_model_ids = {row.get("model_id") for row in manifest.get("models") or [] if row.get("status") == "generated"}
+        assert generated_model_ids == completed_model_ids
 
         forecast = client.get("/api/forecast", query_string={"horizon": "30 days", "granularity": "Daily"})
         assert forecast.status_code == 200, forecast.get_data(as_text=True)

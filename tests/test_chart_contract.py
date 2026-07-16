@@ -54,6 +54,8 @@ def main():
     assert "Cleaned Rows" not in dataset_script and "Duplicate Rows" not in dataset_script
     assert "Primary series dimension" in dataset_script and "Secondary series dimension" in dataset_script
     assert "Training rows" in training_template and "Cleaned rows" not in training_template
+    assert "Applicable completed" in dataset_script and "Not applicable" in dataset_script
+    assert "applicable_total" in training_template and "of {{ applicable_total }} applicable" in training_template
     print("chart contract passed")
 
 

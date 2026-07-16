@@ -39,6 +39,14 @@ def main():
     train = frame.iloc[:180].copy()
     output = frame.iloc[180:].copy()
 
+    future = training_service._future_frame(frame, "D", history_length=60)
+    assert len(future) == 30
+    assert future["exogenous_constant"].notna().all()
+    assert future["exogenous_duplicate_day"].iloc[:7].tolist() == frame["exogenous_duplicate_day"].iloc[-7:].tolist()
+    future["target"] = pd.NA
+    projected_train, projected_future = training_service._exog_pair(frame, future)
+    assert projected_train.shape[1] == projected_future.shape[1]
+
     endog, constant_total = training_service._prepare_var_endog(train)
     assert list(endog.columns) == ["endogenous_1", "endogenous_2"]
     assert constant_total == 4.0

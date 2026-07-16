@@ -559,17 +559,18 @@ def _forecast_warnings(backtest, historical_prediction, future_prediction, uncer
 def _model_context(model, metric, payload, has_future):
     uses_exogenous = "_exog_" in model.lower()
     registry = next((row for row in payload.get("model_registry", []) if row.get("model_id") == model), {})
+    future_exogenous_strategy = payload.get("future_exogenous_strategy", "generated_calendar_only")
     limitations = []
     if not has_future:
         limitations.append("Future forecast is unavailable for the selected model.")
     if uses_exogenous:
-        limitations.append("Only generated calendar features are available for future periods unless mapped scenarios are supplied.")
+        limitations.append("Mapped operational drivers use a trailing seasonal-cycle baseline when explicit future scenarios are not supplied.")
     return {
         "requested_model_id": model, "resolved_model_id": model, "model_id": model,
         "display_name": metric.get("model_label") or model.replace("_Predictions", "").replace("_", " "),
         "uses_exogenous_variables": uses_exogenous,
         "included_feature_groups": ["calendar"] if uses_exogenous else [],
-        "future_feature_availability": {"calendar": "generated"} if uses_exogenous else {},
+        "future_feature_availability": {"calendar": "generated", "mapped_source": future_exogenous_strategy} if uses_exogenous else {},
         "limitations": limitations,
         "scope": registry.get("scope") or metric.get("model_scope") or "aggregate_only",
         "supported_series_count": registry.get("supported_series_count", metric.get("supported_series_count", 0)),

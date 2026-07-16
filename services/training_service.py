@@ -495,9 +495,11 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
         if not publication["forecast_ready"]:
             raise RuntimeError("No usable future forecast was produced by the completed models.")
         elapsed = time.perf_counter() - start_timer
-        terminal_status = "completed_with_warnings" if failed_models or skipped_models or artifact_warnings else "completed"
+        expected_not_applicable = {"insufficient_dynamic_endogenous_series", "insufficient_endogenous_series"}
+        warning_skips = [row for row in skipped_models if row.get("reason_code") not in expected_not_applicable]
+        terminal_status = "completed_with_warnings" if failed_models or warning_skips or artifact_warnings else "completed"
         status.update({
-            "status": terminal_status, "phase": "completed", "current_step": "Completed with warnings" if artifact_warnings or failed_models or skipped_models else "Completed",
+            "status": terminal_status, "phase": "completed", "current_step": "Completed with warnings" if terminal_status == "completed_with_warnings" else "Completed",
             "current_model": "", "current_artifact": "", "end_time": datetime.now().isoformat(timespec="seconds"),
             "finished_at": datetime.now().isoformat(timespec="seconds"), "last_heartbeat": datetime.now().isoformat(timespec="seconds"),
             "duration_seconds": round(elapsed, 2), "duration_display": _duration_display(elapsed),
@@ -1564,6 +1566,7 @@ def _forecast_payload(prediction_frame, metrics, dataset_info, cleaned_df, frequ
         "forecast_start_date": forecast_start_date,
         "forecast_end_date": forecast_end_date,
         "forecast_horizon": len(future),
+        "future_exogenous_strategy": "seasonal_cycle_projection" if _source_exog_columns(historical_frame) else "generated_calendar_only",
         "backtest_duplicate_policy": "shortest_horizon",
         "confidence_level": 95 if any(interval_offsets.values()) else None,
         "seasonality": _seasonality_payload(
@@ -1661,7 +1664,32 @@ def _future_frame(df, frequency, history_length=None):
     future = pd.DataFrame({"date": pd.date_range(start=start, periods=periods, freq=frequency)})
     from services.preprocessing_service import add_exogenous_features
 
-    return add_exogenous_features(future)
+    future = add_exogenous_features(future)
+    return _project_future_source_exog(df, future, frequency)
+
+
+def _project_future_source_exog(history, future, frequency):
+    """Build a no-leakage baseline scenario for mapped drivers missing in future rows."""
+    import pandas as pd
+
+    columns = _source_exog_columns(history)
+    if not columns or future.empty:
+        return future
+    seasonal_period = _seasonal_period(frequency) or 1
+    seasonal_period = max(1, min(int(seasonal_period), len(history)))
+    projected = future.copy()
+    for column in columns:
+        source = history[column].reset_index(drop=True)
+        numeric = pd.to_numeric(source, errors="coerce")
+        if numeric.notna().mean() >= 0.8:
+            fallback = float(numeric.median()) if numeric.notna().any() else 0.0
+            cycle = numeric.fillna(fallback).iloc[-seasonal_period:].tolist()
+        else:
+            cycle = source.where(source.notna(), "(missing)").astype(str).iloc[-seasonal_period:].tolist()
+        if not cycle:
+            cycle = [0.0]
+        projected[column] = [cycle[index % len(cycle)] for index in range(len(projected))]
+    return projected
 
 
 def _infer_frequency(df):
@@ -1961,7 +1989,7 @@ def _model_input_summary(model_id, fitter_name, training_df):
         "exogenous_mode": exogenous_mode,
         "frequency": _infer_frequency(training_df),
         "validation_folds": len(_rolling_folds(len(training_df), _fold_validation_size(len(training_df)))),
-        "future_feature_availability": {column: False for column in source},
+        "future_feature_availability": {column: "seasonal_cycle_projection" for column in source},
     }
 
 
