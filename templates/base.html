@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}ACI Forecast Intelligence{% endblock %}</title>
+    <title>{% block title %}ACI Healthcare Workforce Forecast{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
       <aside class="sidebar">
         <a class="brand" href="{{ url_for('index') }}">
           <span class="brand-mark"><i data-lucide="sparkles"></i></span>
-          <span><strong>ACI</strong><small>Forecast Intelligence</small></span>
+          <span><strong>ACI</strong><small>Healthcare Workforce</small></span>
         </a>
         <nav class="side-nav" aria-label="Primary navigation">
           <span class="nav-label">Workspace</span>
@@ -35,7 +35,7 @@
       <div class="workspace">
         <header class="command-bar">
           <button class="icon-button menu-toggle" type="button" aria-label="Toggle navigation"><i data-lucide="menu"></i></button>
-          <div class="breadcrumb"><span>Forecast Intelligence</span><i data-lucide="chevron-right"></i><strong>{% block breadcrumb %}Workspace{% endblock %}</strong></div>
+          <div class="breadcrumb"><span>Healthcare Forecasting</span><i data-lucide="chevron-right"></i><strong>{% block breadcrumb %}Workspace{% endblock %}</strong></div>
           <div class="command-actions"><span class="system-chip status-ready" id="systemStatus" aria-live="polite"><span class="live-dot"></span><span class="system-status-text">System ready</span></span><a class="icon-button" href="{{ url_for('training_pipeline') }}" aria-label="Training activity"><i data-lucide="bell-ring"></i></a></div>
         </header>
         <main class="app-canvas">{% block content %}{% endblock %}</main>

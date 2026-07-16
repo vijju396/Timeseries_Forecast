@@ -10,13 +10,15 @@ from datetime import datetime
 from pathlib import Path
 
 from services.data_service import DATA_DIR, current_dataset_id, current_runtime_namespace, load_json, preprocessed_path, save_json, set_runtime_namespace
+from services import dependency_service
 from services.metrics_service import calculate_metrics, is_valid_metric
 from services.series_service import aggregate_series_identity, row_series_identity, series_count
 
 
 os.environ.setdefault("MPLCONFIGDIR", str(DATA_DIR / ".matplotlib"))
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-EXOG_COLUMNS = ["week_exog", "dayOfWeek_exog", "month_exog"]
+CALENDAR_EXOG_COLUMNS = ["week_exog", "dayOfWeek_exog", "month_exog"]
+SOURCE_EXOG_PREFIX = "exogenous_"
 TRAINING_MODE = "Full ML Training"
 MODEL_SPECS = [
     ("sarimax_Predictions", "SARIMAX", "_fit_sarimax"),
@@ -62,6 +64,10 @@ class TrainingConflictError(RuntimeError):
 
 
 class StaleTrainingJob(RuntimeError):
+    pass
+
+
+class FutureExogenousUnavailable(ValueError):
     pass
 
 
@@ -207,7 +213,7 @@ def _recover_stale_training_status(status):
     )
     if status.get("status") != "running" or active_thread:
         return status
-    terminal_models = len(status.get("completed_models") or []) + len(status.get("failed_models") or [])
+    terminal_models = len(status.get("completed_models") or []) + len(status.get("failed_models") or []) + len(status.get("skipped_models") or [])
     expected_models = status.get("models_expected") or status.get("total_models") or 0
     if terminal_models < expected_models:
         return status
@@ -314,18 +320,40 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
         metric_rows = []
         completed_models = []
         failed_models = []
+        skipped_models = []
         backtest_predictions = {}
         fitters = _fitters()
 
         for model_name, label, fitter_name in MODEL_SPECS:
             model_timer = time.perf_counter()
             update(current_step=f"Training {label}", current_model=label)
+            eligibility = _model_eligibility(model_name, fitter_name, training_df)
+            if not eligibility["eligible"]:
+                skipped = {
+                    "model": model_name, "model_label": label, "status": "skipped",
+                    "runtime_seconds": 0, "reason_code": eligibility["reason_code"],
+                    "reason": eligibility["reason"],
+                }
+                skipped_models.append(skipped)
+                log("warning", f"Model skipped: {skipped['reason']}", model_name)
+                update(
+                    completed_models=completed_models, failed_models=failed_models, skipped_models=skipped_models,
+                    models_terminal=len(completed_models) + len(failed_models) + len(skipped_models),
+                )
+                continue
             try:
+                input_summary = _model_input_summary(model_name, fitter_name, training_df)
+                log("info", _input_summary_text(input_summary), model_name)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     backtest = _rolling_origin_evaluation(fitters[fitter_name], training_df)
                     holdout_predictions = fitters[fitter_name](train_df, holdout_df)
-                    future_predictions = fitters[fitter_name](training_df, future_df)
+                    future_unavailable_reason = None
+                    try:
+                        future_predictions = fitters[fitter_name](training_df, future_df)
+                    except FutureExogenousUnavailable as exc:
+                        future_predictions = [None] * len(future_df)
+                        future_unavailable_reason = str(exc)
 
                 predictions = list(holdout_predictions) + list(future_predictions)
                 prediction_frame[model_name] = _clean_predictions(predictions, len(output_df))
@@ -354,6 +382,9 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
                         "folds": backtest["folds"],
                         "runtime_seconds": runtime,
                         "status": "completed",
+                        "input_summary": input_summary,
+                        "future_forecast_available": future_unavailable_reason is None,
+                        "future_unavailable_reason": future_unavailable_reason,
                     }
                 if not is_valid_metric(metric_row):
                     raise ValueError("Model produced invalid or overflowed finite metrics.")
@@ -369,6 +400,8 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
                 )
                 if backtest.get("reason"):
                     log("info", backtest["reason"], model_name)
+                if future_unavailable_reason:
+                    log("warning", future_unavailable_reason, model_name)
                 log("info", "Model evaluated, then refit on full history for future forecasting.", model_name)
             except Exception as exc:
                 runtime = round(time.perf_counter() - model_timer, 2)
@@ -381,7 +414,10 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
                 }
                 failed_models.append(failure)
                 log("warning", f"Model failed, continuing remaining models: {failure['reason']}", model_name)
-            update(completed_models=completed_models, failed_models=failed_models, models_terminal=len(completed_models) + len(failed_models))
+            update(
+                completed_models=completed_models, failed_models=failed_models, skipped_models=skipped_models,
+                models_terminal=len(completed_models) + len(failed_models) + len(skipped_models),
+            )
 
         if not metric_rows:
             raise RuntimeError("All full ML model training attempts failed. Check dependencies and training log.")
@@ -459,14 +495,14 @@ def run_real_training_pipeline(dataset_mapping=None, dataset_id=None, job_id=Non
         if not publication["forecast_ready"]:
             raise RuntimeError("No usable future forecast was produced by the completed models.")
         elapsed = time.perf_counter() - start_timer
-        terminal_status = "completed_with_warnings" if failed_models or artifact_warnings else "completed"
+        terminal_status = "completed_with_warnings" if failed_models or skipped_models or artifact_warnings else "completed"
         status.update({
-            "status": terminal_status, "phase": "completed", "current_step": "Completed with warnings" if artifact_warnings or failed_models else "Completed",
+            "status": terminal_status, "phase": "completed", "current_step": "Completed with warnings" if artifact_warnings or failed_models or skipped_models else "Completed",
             "current_model": "", "current_artifact": "", "end_time": datetime.now().isoformat(timespec="seconds"),
             "finished_at": datetime.now().isoformat(timespec="seconds"), "last_heartbeat": datetime.now().isoformat(timespec="seconds"),
             "duration_seconds": round(elapsed, 2), "duration_display": _duration_display(elapsed),
             "message": "Full ML Training completed with warnings." if terminal_status == "completed_with_warnings" else "Full ML Training completed.",
-            "completed_models": completed_models, "failed_models": failed_models, "total_models": len(MODEL_SPECS),
+            "completed_models": completed_models, "failed_models": failed_models, "skipped_models": skipped_models, "total_models": len(MODEL_SPECS),
         })
         _set_dataset_phase(dataset_id, "completed", job_id)
         _write_status(status)
@@ -529,6 +565,24 @@ def _fitters():
     }
 
 
+def _model_eligibility(model_id, fitter_name, training_df, dependency_registry=None):
+    dependency = dependency_service.model_dependency_status(model_id, dependency_registry)
+    if not dependency["available"]:
+        module = dependency["module"] or "required package"
+        return {
+            "eligible": False,
+            "reason_code": "dependency_unavailable",
+            "reason": f"{module} is not installed in the active server environment: {dependency.get('import_error') or 'import unavailable'}.",
+        }
+    if model_id in {"var_Predictions", "var_exog_Predictions"} and len(_endogenous_columns(training_df)) < 2:
+        return {
+            "eligible": False,
+            "reason_code": "insufficient_endogenous_series",
+            "reason": "VAR requires at least two aligned mapped target series.",
+        }
+    return {"eligible": True, "reason_code": None, "reason": None}
+
+
 def _ensure_training_input(dataset_mapping, dataset_id):
     _dataset, adapted = _active_dataset_for_training(dataset_id)
     return {**adapted, "dataset_id": dataset_id}
@@ -553,16 +607,40 @@ def _load_cleaned_frame():
 def _training_series(cleaned_df):
     import pandas as pd
 
-    frame = (
-        cleaned_df.groupby("Date", as_index=False)["Click Count"]
-        .sum()
-        .rename(columns={"Date": "date", "Click Count": "target"})
-        .sort_values("date")
-    )
+    source_exog = _source_exog_columns(cleaned_df)
+    dimension_columns = sorted(column for column in cleaned_df.columns if str(column).startswith("dimension_"))
+    panel = None
+    if dimension_columns:
+        panel = cleaned_df.pivot_table(
+            index="Date", columns=dimension_columns, values="Click Count", aggfunc="sum", dropna=True, observed=True,
+        ).sort_index()
+        if panel.shape[1] >= 2:
+            panel.columns = [f"endogenous_{index + 1}" for index in range(panel.shape[1])]
+            panel = panel.reset_index()
+        else:
+            panel = None
+    aggregations = {"Click Count": "sum"}
+    for column in source_exog:
+        numeric = pd.to_numeric(cleaned_df[column], errors="coerce")
+        aggregations[column] = "mean" if numeric.notna().mean() >= 0.8 else _mode_or_last
+    frame = cleaned_df.groupby("Date", as_index=False, dropna=False).agg(aggregations)
+    frame = frame.rename(columns={"Date": "date", "Click Count": "target"}).sort_values("date")
     frame["date"] = pd.to_datetime(frame["date"])
+    if panel is not None:
+        panel = panel.rename(columns={"Date": "date"})
+        panel["date"] = pd.to_datetime(panel["date"])
+        frame = frame.merge(panel, on="date", how="left", validate="one_to_one")
     from services.preprocessing_service import add_exogenous_features
 
     return add_exogenous_features(frame.reset_index(drop=True))
+
+
+def _mode_or_last(values):
+    modes = values.dropna().mode()
+    if len(modes):
+        return modes.iloc[0]
+    non_null = values.dropna()
+    return non_null.iloc[-1] if len(non_null) else None
 
 
 def _generate_series_artifacts(cleaned_df, dataset_info, metrics, fitters, progress=None):
@@ -902,8 +980,7 @@ def _sarimax_forecast(train_df, output_df, use_exog):
     from statsmodels.tsa.statespace.sarimax import SARIMAX
 
     _require_rows(train_df, 12, "SARIMAX")
-    exog_train = _exog(train_df) if use_exog else None
-    exog_future = _exog(output_df) if use_exog else None
+    exog_train, exog_future = _exog_pair(train_df, output_df) if use_exog else (None, None)
     model = SARIMAX(
         train_df["target"].astype(float),
         exog=exog_train,
@@ -927,8 +1004,7 @@ def _auto_arima_forecast(train_df, output_df, use_exog):
     import pmdarima as pm
 
     _require_rows(train_df, 24, "Auto ARIMA")
-    x_train = _exog(train_df) if use_exog else None
-    x_future = _exog(output_df) if use_exog else None
+    x_train, x_future = _exog_pair(train_df, output_df) if use_exog else (None, None)
     model = pm.auto_arima(
         train_df["target"].astype(float),
         X=x_train,
@@ -986,8 +1062,10 @@ def _xgboost_forecast(train_df, output_df, use_exog):
     history = train_df["target"].astype(float).tolist()
     predictions = []
     feature_columns = list(x_train.columns)
+    exog_schema = x_train.attrs.get("exog_schema", [])
     for _index, row in output_df.iterrows():
-        features = pd.DataFrame([_xgb_features(row["date"], history, use_exog)], columns=feature_columns)
+        features = pd.DataFrame([_xgb_features(row["date"], history, use_exog, row=row, exog_schema=exog_schema)])
+        features = features.reindex(columns=feature_columns, fill_value=0.0)
         prediction = float(model.predict(features)[0])
         predictions.append(prediction)
         history.append(float(row["target"]) if pd.notna(row.get("target")) else prediction)
@@ -1051,27 +1129,25 @@ def _fit_var(train_df, output_df):
     model = VAR(endog).fit(maxlags=maxlags, ic=None, trend="c")
     lag_order = model.k_ar
     forecast_input = endog.values[-lag_order:]
-    return model.forecast(forecast_input, steps=len(output_df))[:, 0]
+    return model.forecast(forecast_input, steps=len(output_df)).sum(axis=1)
 
 
 def _fit_var_exog(train_df, output_df):
     from statsmodels.tsa.statespace.varmax import VARMAX
 
-    exog_columns = [column for column in _available_exog(train_df) if column != "dayOfWeek_exog"]
-    if not exog_columns:
-        raise ValueError("VAR exogenous model requires exogenous columns.")
-    endog_columns = ["target", "dayOfWeek_exog"] if "dayOfWeek_exog" in train_df.columns else ["target"]
-    if len(endog_columns) < 2:
+    exog_train, exog_future = _exog_pair(train_df, output_df)
+    endog = _var_endog(train_df)
+    if endog.shape[1] < 2:
         raise ValueError("VAR exogenous model requires at least two endogenous series.")
     model = VARMAX(
-        train_df[endog_columns].astype(float),
-        exog=train_df[exog_columns].astype(float),
+        endog,
+        exog=exog_train,
         order=(1, 0),
         trend="c",
         enforce_stationarity=False,
     ).fit(disp=False, maxiter=100)
-    forecast = model.forecast(steps=len(output_df), exog=output_df[exog_columns].astype(float))
-    return forecast.iloc[:, 0]
+    forecast = model.forecast(steps=len(output_df), exog=exog_future)
+    return forecast.sum(axis=1)
 
 
 def _fit_lstm(train_df, output_df):
@@ -1127,15 +1203,19 @@ def _xgb_training_matrix(train_df, use_exog):
     import pandas as pd
 
     history = train_df["target"].astype(float).tolist()
+    exog_schema = _fit_source_exog_schema(train_df) if use_exog else []
     rows = []
     targets = []
     for index in range(1, len(train_df)):
-        rows.append(_xgb_features(train_df.iloc[index]["date"], history[:index], use_exog))
+        row = train_df.iloc[index]
+        rows.append(_xgb_features(row["date"], history[:index], use_exog, row=row, exog_schema=exog_schema))
         targets.append(history[index])
-    return pd.DataFrame(rows), pd.Series(targets)
+    matrix = pd.DataFrame(rows)
+    matrix.attrs["exog_schema"] = exog_schema
+    return matrix, pd.Series(targets)
 
 
-def _xgb_features(date_value, history, use_exog):
+def _xgb_features(date_value, history, use_exog, row=None, exog_schema=None):
     import pandas as pd
 
     date_value = pd.Timestamp(date_value)
@@ -1150,6 +1230,9 @@ def _xgb_features(date_value, history, use_exog):
         "lag_28": _lag(history, 28),
         "rolling_7": _rolling(history, 7),
         "rolling_28": _rolling(history, 28),
+        "rolling_median_7": _rolling_median(history, 7),
+        "rolling_std_7": _rolling_std(history, 7),
+        "trend_index": len(history),
     }
     if use_exog:
         features.update(
@@ -1159,6 +1242,7 @@ def _xgb_features(date_value, history, use_exog):
                 "month_exog": date_value.month,
             }
         )
+        features.update(_encoded_source_exog(row, exog_schema or []))
     return features
 
 
@@ -1458,7 +1542,10 @@ def _forecast_payload(prediction_frame, metrics, dataset_info, cleaned_df, frequ
         "mode": "trained",
         "source": dataset_info.get("source_file") or dataset_info.get("cleaned_path", ""),
         "frequency": frequency,
-        "target_display_name": dataset_info.get("target_column") or "Target",
+        "target_display_name": dataset_info.get("target_display_name") or dataset_info.get("target_column") or "Target",
+        "target_unit": dataset_info.get("target_unit"),
+        "domain": dataset_info.get("domain", "general"),
+        "aggregation": dataset_info.get("aggregation", "sum"),
         "dimension_schema": dimension_schema,
         "dimension_options": configured_options,
         "series_count": dataset_info.get("series_count", 1),
@@ -1482,7 +1569,11 @@ def _forecast_payload(prediction_frame, metrics, dataset_info, cleaned_df, frequ
         "forecast_horizon": len(future),
         "backtest_duplicate_policy": "shortest_horizon",
         "confidence_level": 95 if any(interval_offsets.values()) else None,
-        "seasonality": _seasonality_payload(historical_frame, frequency),
+        "seasonality": _seasonality_payload(
+            historical_frame,
+            frequency,
+            dataset_info.get("target_display_name") or dataset_info.get("target_column") or "Target",
+        ),
         "explanation": {"direction": "stable", "summary": "Forecast explanation is available in the Forecast Explorer.", "reasons": []},
     }
 
@@ -1518,7 +1609,7 @@ def _forecast_dates(prediction_frame):
     }
 
 
-def _seasonality_payload(frame, frequency):
+def _seasonality_payload(frame, frequency, target_display_name="Target"):
     import pandas as pd
 
     grouped = frame.copy()
@@ -1529,7 +1620,8 @@ def _seasonality_payload(frame, frequency):
     strongest, weakest = max(means, key=means.get), min(means, key=means.get)
     average = sum(means.values()) / len(means) or 1
     strength = round(min(100, max(0, (means[strongest] - means[weakest]) / average * 100)), 2)
-    summary = f"Demand is strongest on {strongest} and weakest on {weakest}." if str(frequency).startswith("D") else f"Forecast shows seasonal lift in {strongest}."
+    label = str(target_display_name or "Target")
+    summary = f"{label} is strongest on {strongest} and weakest on {weakest}." if str(frequency).startswith("D") else f"{label} shows seasonal lift in {strongest}."
     return {"frequency": str(frequency), "strength": strength, "strongest_period": strongest, "weakest_period": weakest, "summary": summary}
 
 
@@ -1654,19 +1746,98 @@ def _average_metrics(metrics):
 
 
 def _exog(df):
-    columns = _available_exog(df)
-    if not columns:
-        raise ValueError("Exogenous model requires exogenous columns.")
-    return df[columns].astype(float)
+    """Compatibility helper for diagnostics; paired fitting uses fold-fitted encoding."""
+    encoded, _ = _exog_pair(df, df)
+    return encoded
+
+
+def _exog_pair(train_df, output_df):
+    import numpy as np
+    import pandas as pd
+
+    schema = _fit_source_exog_schema(train_df)
+    if not schema and not any(column in train_df for column in CALENDAR_EXOG_COLUMNS):
+        raise ValueError("Exogenous model requires mapped source or deterministic calendar features.")
+    future_output = bool(len(output_df)) and output_df.get("target", pd.Series(dtype=float)).isna().all()
+    train_rows = []
+    output_rows = []
+    for _index, row in train_df.iterrows():
+        values = _encoded_source_exog(row, schema)
+        values.update({column: float(row[column]) for column in CALENDAR_EXOG_COLUMNS if column in row})
+        train_rows.append(values)
+    for _index, row in output_df.iterrows():
+        try:
+            values = _encoded_source_exog(row, schema, require_values=future_output)
+        except FutureExogenousUnavailable:
+            raise
+        values.update({column: float(row[column]) for column in CALENDAR_EXOG_COLUMNS if column in row})
+        output_rows.append(values)
+    train = pd.DataFrame(train_rows)
+    output = pd.DataFrame(output_rows).reindex(columns=train.columns, fill_value=0.0)
+    if not np.isfinite(train.to_numpy(dtype=float)).all() or not np.isfinite(output.to_numpy(dtype=float)).all():
+        raise ValueError("Exogenous matrix contains non-finite values after fold-fitted preprocessing.")
+    return train.astype(float), output.astype(float)
 
 
 def _available_exog(df):
-    return [column for column in EXOG_COLUMNS if column in df.columns]
+    return _source_exog_columns(df) + [column for column in CALENDAR_EXOG_COLUMNS if column in df.columns]
+
+
+def _source_exog_columns(df):
+    return sorted(column for column in df.columns if str(column).startswith(SOURCE_EXOG_PREFIX))
+
+
+def _fit_source_exog_schema(train_df):
+    import pandas as pd
+
+    schema = []
+    max_categories = max(2, int(os.getenv("FORECAST_MAX_EXOG_CATEGORIES", "50")))
+    for column in _source_exog_columns(train_df):
+        values = train_df[column]
+        numeric = pd.to_numeric(values, errors="coerce")
+        if numeric.notna().mean() >= 0.8:
+            fill = float(numeric.median()) if numeric.notna().any() else 0.0
+            schema.append({"column": column, "kind": "numeric", "fill": fill, "features": [column]})
+            continue
+        categories = sorted(values.dropna().astype(str).unique().tolist())
+        if len(categories) > max_categories:
+            raise ValueError(f"Exogenous feature {column} exceeds the configured categorical cardinality limit.")
+        schema.append({
+            "column": column, "kind": "categorical", "categories": categories,
+            "features": [f"{column}__{index}" for index in range(len(categories))],
+        })
+    return schema
+
+
+def _encoded_source_exog(row, schema, require_values=False):
+    import pandas as pd
+
+    values = {}
+    for feature in schema:
+        column = feature["column"]
+        raw = row.get(column) if row is not None else None
+        missing = raw is None or pd.isna(raw)
+        if missing and require_values:
+            raise FutureExogenousUnavailable(
+                f"Future forecast is unavailable because mapped feature '{column}' has no future values. Historical backtesting remains valid."
+            )
+        if feature["kind"] == "numeric":
+            parsed = pd.to_numeric(pd.Series([raw]), errors="coerce").iloc[0]
+            values[column] = feature["fill"] if pd.isna(parsed) else float(parsed)
+        else:
+            text = None if missing else str(raw)
+            for index, category in enumerate(feature["categories"]):
+                values[f"{column}__{index}"] = 1.0 if text == category else 0.0
+    return values
 
 
 def _var_endog(df):
-    columns = ["target"] + _available_exog(df)
-    return df[columns].astype(float)
+    columns = _endogenous_columns(df)
+    return df[columns].astype(float) if len(columns) >= 2 else df[["target"]].astype(float)
+
+
+def _endogenous_columns(df):
+    return sorted(column for column in df.columns if str(column).startswith("endogenous_"))
 
 
 def _require_rows(df, minimum, model_name):
@@ -1685,6 +1856,67 @@ def _rolling(history, window):
         return 0
     tail = history[-window:] if len(history) >= window else history
     return sum(tail) / len(tail)
+
+
+def _rolling_median(history, window):
+    import statistics
+
+    if not history:
+        return 0
+    return float(statistics.median(history[-window:]))
+
+
+def _rolling_std(history, window):
+    import statistics
+
+    if len(history) < 2:
+        return 0
+    tail = history[-window:]
+    return float(statistics.pstdev(tail)) if len(tail) > 1 else 0
+
+
+def _model_input_summary(model_id, fitter_name, training_df):
+    source = _source_exog_columns(training_df)
+    uses_exog = "_exog" in fitter_name
+    exogenous_mode = "mapped_source_plus_calendar" if uses_exog and source else "deterministic_calendar" if uses_exog else "none"
+    generated = list(CALENDAR_EXOG_COLUMNS) if uses_exog else []
+    encoded = []
+    if uses_exog and source:
+        for feature in _fit_source_exog_schema(training_df):
+            encoded.extend(feature["features"])
+    if "xgboost" in fitter_name:
+        generated += [
+            "date_ordinal", "dayofweek", "month", "dayofyear", "lag_1", "lag_7", "lag_14", "lag_28",
+            "rolling_7", "rolling_28", "rolling_median_7", "rolling_std_7", "trend_index",
+        ]
+    final_features = (encoded + generated) if uses_exog else (generated if "xgboost" in fitter_name else [])
+    rows = max(0, len(training_df) - 1) if "xgboost" in fitter_name else len(training_df)
+    return {
+        "model_id": model_id,
+        "model_type": fitter_name,
+        "rows": len(training_df),
+        "target_column": "target",
+        "source_exogenous_features": source,
+        "source_exogenous_feature_count": len(source),
+        "generated_features": generated,
+        "generated_feature_count": len(generated),
+        "final_feature_names": final_features[:100],
+        "final_feature_count": len(final_features),
+        "matrix_shape": [rows, len(final_features)],
+        "series_count": max(1, len(_endogenous_columns(training_df))),
+        "exogenous_mode": exogenous_mode,
+        "frequency": _infer_frequency(training_df),
+        "validation_folds": len(_rolling_folds(len(training_df), _fold_validation_size(len(training_df)))),
+        "future_feature_availability": {column: False for column in source},
+    }
+
+
+def _input_summary_text(summary):
+    return (
+        f"Input rows={summary['rows']}; target={summary['target_column']}; "
+        f"source_exogenous={summary['source_exogenous_feature_count']}; "
+        f"generated={summary['generated_feature_count']}; matrix={summary['matrix_shape']}."
+    )
 
 
 def _lstm_window():
@@ -1741,6 +1973,7 @@ def _initial_status(start_time=None, dataset_id=None, job_id=None, artifact_id=N
         "current_model": "",
         "completed_models": [],
         "failed_models": [],
+        "skipped_models": [],
         "total_models": len(MODEL_SPECS),
         "raw_rows": 0,
         "cleaned_rows": 0,
@@ -1778,6 +2011,7 @@ def _idle_status():
         "current_model": "",
         "completed_models": [],
         "failed_models": [],
+        "skipped_models": [],
         "total_models": len(MODEL_SPECS),
         "raw_rows": 0,
         "cleaned_rows": 0,

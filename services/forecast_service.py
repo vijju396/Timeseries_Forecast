@@ -726,7 +726,14 @@ def _filter_model_payload(payload, active_id, requested_hash, dimensions, params
 
 def _global_champion_metadata(payload, aggregate_options=None):
     aggregate_options = aggregate_options if aggregate_options is not None else _model_options(payload, aggregate_series_identity()["series_key_hash"])
-    supported = {row["model_id"]: row for row in aggregate_options if row.get("supports_selected_series")}
+    forecast_capable = {
+        row["model_id"]: row
+        for row in aggregate_options
+        if row.get("supports_selected_series") and row.get("supports_future_forecast")
+    }
+    supported = forecast_capable or {
+        row["model_id"]: row for row in aggregate_options if row.get("supports_selected_series")
+    }
     champion = get_champion() or {}
     champion_id = champion.get("model")
     ownership_valid = all(not champion.get(key) or champion.get(key) == payload.get(key) for key in ("dataset_id", "artifact_id", "job_id"))
@@ -912,7 +919,7 @@ def _seasonality(rows, granularity):
     strongest, weakest = max(means, key=means.get), min(means, key=means.get)
     average = sum(means.values()) / len(means) or 1
     strength = round(min(100, max(0, (max(means.values()) - min(means.values())) / average * 100)), 2)
-    summary = f"Demand is strongest on {strongest} and weakest on {weakest}." if granularity == "Daily" else f"Forecast shows seasonal lift in {strongest}."
+    summary = f"The target is strongest on {strongest} and weakest on {weakest}." if granularity == "Daily" else f"The target shows seasonal lift in {strongest}."
     return {"frequency": granularity, "strength": strength, "strongest_period": strongest, "weakest_period": weakest, "summary": summary}
 
 

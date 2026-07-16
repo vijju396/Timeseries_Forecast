@@ -1,10 +1,9 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
-Data/runtime/
-Data/uploads/
-Data/Preprocessed/
+Data/
 *.log
 .DS_Store
 flask-server.log

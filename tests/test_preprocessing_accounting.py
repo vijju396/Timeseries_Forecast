@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import dataset_adapter, enrichment_service, preprocessing_service
+from services import dataset_adapter, enrichment_service, preprocessing_service, training_service
 
 
 class _Patch:
@@ -39,7 +39,11 @@ def _adapt(frame, mapping, directory, dataset_id):
 def _assert_reconciled(adapted):
     summary = adapted["profile"]["summary"]
     preprocessing = adapted["preprocessing_metrics"]
-    expected = summary["valid_rows"] - summary["rows_aggregated"] + summary["calendar_rows_generated"] - summary["unresolved_generated_rows_removed"]
+    expected = (
+        summary["valid_rows"] - summary.get("exact_duplicate_rows_removed", 0)
+        - summary["rows_aggregated"] + summary["calendar_rows_generated"]
+        - summary["unresolved_generated_rows_removed"]
+    )
     assert summary["training_rows"] == expected
     assert summary["row_accounting_expected"] == expected
     assert summary["row_accounting_reconciled"] is True
@@ -99,11 +103,68 @@ def test_frequency_and_schema_compatibility(directory):
         _assert_reconciled(adapted)
 
 
+def test_feature_lineage_duplicates_and_model_matrix(directory):
+    rows = []
+    for day in range(1, 7):
+        for department, team in (("A", "red"), ("B", "blue")):
+            rows.append({
+                "when": f"2024-01-{day:02d}", "workers": 10 + day,
+                "department": department, "team": team, "price": 100 + day,
+                "promotion": day % 2 == 0, "status": "open", "capacity": 20 + day,
+                "future_target": 99, "ignored_a": "x", "ignored_b": day, "ignored_c": "z",
+                "ignored_d": 1,
+            })
+    rows.append({**rows[0], "workers": 3, "price": 90})  # legitimate grain collision
+    rows.append(dict(rows[1]))  # exact duplicate
+    frame = pd.DataFrame(rows)
+    adapted = _adapt(frame, {
+        "date_column": "when", "target_column": "workers",
+        "dimension_columns": ["department", "team"],
+        "exogenous_columns": ["price", "promotion", "status", "future_target"],
+    }, directory, "feature_lineage")
+    metrics = adapted["preprocessing_metrics"]
+    assert metrics["exact_duplicate_rows_removed"] == 1
+    assert metrics["grain_collision_groups"] == 1
+    assert metrics["rows_combined_by_aggregation"] == 1
+    assert metrics["post_aggregation_rows"] == 12
+    assert metrics["training_rows"] == 12
+    assert len(adapted["column_lineage"]) == 13
+    assert all(row["retained"] or row["reason"] for row in adapted["column_lineage"])
+    leaked = next(row for row in adapted["column_lineage"] if row["original_column"] == "future_target")
+    assert leaked["retained"] is False and "leakage" in leaked["reason"]
+
+    model_ready = pd.read_csv(directory / "ts_preprocessed.csv")
+    assert len(model_ready) == 12
+    assert {"dimension_1", "dimension_2", "exogenous_1", "exogenous_2", "exogenous_3"}.issubset(model_ready.columns)
+    cleaned = pd.read_csv(directory / "cleaned_training_input.csv")
+    cleaned["Date"] = pd.to_datetime(cleaned["Date"])
+    aggregate = training_service._training_series(cleaned)
+    assert len(aggregate) == 6
+    matrix, target = training_service._xgb_training_matrix(aggregate, use_exog=True)
+    assert len(matrix) == len(target) == 5
+    assert any(column.startswith("exogenous_1") for column in matrix.columns)
+    assert matrix.shape[1] > 13  # source features augment calendar, lag, rolling and trend features
+    summary = training_service._model_input_summary("xgboost_exog", "_fit_xgboost_exog", aggregate)
+    assert summary["source_exogenous_feature_count"] == 3
+    assert summary["final_feature_count"] > summary["generated_feature_count"]
+
+    future = preprocessing_service.add_exogenous_features(pd.DataFrame({
+        "date": pd.date_range("2024-01-07", periods=2, freq="D"), "target": [None, None]
+    }))
+    try:
+        training_service._exog_pair(aggregate, future)
+    except training_service.FutureExogenousUnavailable:
+        pass
+    else:
+        raise AssertionError("Future exogenous inputs must not be silently forward-filled.")
+
+
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
         test_transaction_accounting(directory)
         test_frequency_and_schema_compatibility(directory)
+        test_feature_lineage_duplicates_and_model_matrix(directory)
     print("preprocessing accounting harness passed")
 
 

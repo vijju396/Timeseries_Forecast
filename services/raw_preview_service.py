@@ -107,7 +107,21 @@ def read_dataframe(path, nrows=None, include_count=False):
         frame = raw.iloc[1:].reset_index(drop=True)
         frame.columns = internal_headers
         total = max(0, len(raw) - 1) if nrows is None else None
-        return frame, source_headers, {"format": "xlsx", "encoding": None, "delimiter": None, "quote_character": None}, total, bool(nrows is None)
+        exact = nrows is None
+        if include_count and nrows is not None:
+            try:
+                from openpyxl import load_workbook
+
+                workbook = load_workbook(source, read_only=True, data_only=True)
+                try:
+                    total = max(0, workbook.active.max_row - 1)
+                    exact = True
+                finally:
+                    workbook.close()
+            except Exception:
+                # Preview and schema remain usable even when an exact workbook row count is unavailable.
+                total, exact = None, False
+        return frame, source_headers, {"format": "xlsx", "encoding": None, "delimiter": None, "quote_character": None}, total, exact
 
     spec = detect_text_format(source)
     if nrows is None:

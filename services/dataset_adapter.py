@@ -13,11 +13,27 @@ from services.series_service import build_dimension_schema, dimension_options, s
 
 
 DATE_NAME_HINTS = {"date", "order date", "sales date", "ds", "timestamp", "week", "month"}
-TARGET_NAME_HINTS = {"sales", "demand", "quantity", "qty", "revenue", "target", "y", "clicks", "click count"}
-STORE_HINTS = ("store id", "store", "region", "site", "outlet", "location", "market", "branch")
-ITEM_HINTS = ("item id", "item", "sku", "product", "article", "material")
+TARGET_NAME_HINTS = {
+    "sales", "demand", "quantity", "qty", "revenue", "target", "y", "clicks", "click count",
+    "manpower required", "staff required", "staffing required", "staffing demand", "workforce required",
+    "required headcount", "headcount required",
+}
+STORE_HINTS = ("store id", "store", "region", "site", "outlet", "location", "market", "branch", "facility id", "facility")
+ITEM_HINTS = ("item id", "item", "sku", "product", "article", "material", "department", "unit", "service line")
+HEALTHCARE_TARGET_HINTS = {
+    "manpower required", "staff required", "staffing required", "staffing demand", "workforce required",
+    "required headcount", "headcount required",
+}
+HEALTHCARE_EXOGENOUS_HINTS = (
+    "day of week", "is weekend", "is holiday", "holiday name", "season", "patient census",
+    "occupancy rate", "patient acuity index", "admissions", "discharges",
+)
+HEALTHCARE_STAFFING_OUTCOME_HINTS = {
+    "total staff hours", "scheduled staff", "absent staff", "available staff", "overtime hours",
+}
+PROVENANCE_HINTS = {"data origin", "source url", "source", "provenance"}
 SUPPORTED_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx"}
-PREPROCESSING_VERSION = "2026-07-dynamic-v1"
+PREPROCESSING_VERSION = "2026-07-healthcare-manpower-v3"
 
 
 def analyze_file(path, original_filename=None, dataset_id=None, source_hash=None):
@@ -50,8 +66,27 @@ def detect_mapping(df):
     columns = [str(column) for column in df.columns]
     date_column, date_ratio = _detect_date_column(df, columns)
     target_column, target_ratio, numeric_candidates = _detect_target_column(df, columns, date_column)
-    store_column = _first_name_match(columns, STORE_HINTS)
-    item_column = _first_name_match(columns, ITEM_HINTS)
+    healthcare_target = _first_exact_name_match(columns, HEALTHCARE_TARGET_HINTS)
+    if healthcare_target:
+        target_column = healthcare_target
+        target_ratio = float(_numeric_series(df[target_column]).notna().mean()) if len(df) else 0.0
+    domain = "healthcare_staffing" if healthcare_target else "general"
+    if domain == "healthcare_staffing":
+        item_column = _first_exact_name_match(columns, {"department", "unit", "service line"})
+        store_column = _first_exact_name_match(columns, {"facility id", "facility", "facility name"})
+        # Department is the most useful staffing slice; facility is the secondary ownership dimension.
+        dimension_columns = [column for column in (item_column, store_column) if column]
+        store_column = dimension_columns[0] if dimension_columns else ""
+        item_column = dimension_columns[1] if len(dimension_columns) > 1 else ""
+        exogenous_columns = [
+            column for hint in HEALTHCARE_EXOGENOUS_HINTS
+            for column in columns if _normalized(column) == hint
+        ]
+    else:
+        store_column = _first_name_match(columns, STORE_HINTS)
+        item_column = _first_name_match(columns, ITEM_HINTS)
+        dimension_columns = [column for column in (store_column, item_column) if column]
+        exogenous_columns = []
 
     target_named = _normalized(target_column) in TARGET_NAME_HINTS if target_column else False
     target_confident = bool(target_column) and target_ratio >= 0.6 and (
@@ -70,7 +105,11 @@ def detect_mapping(df):
         "target_column": target_column or "",
         "store_column": store_column or "",
         "item_column": item_column or "",
-        "dimension_columns": [column for column in (store_column, item_column) if column],
+        "dimension_columns": dimension_columns,
+        "exogenous_columns": exogenous_columns,
+        "domain": domain,
+        "target_display_name": _display_name(target_column),
+        "target_unit": _target_unit(target_column),
         "date_confidence": round(date_ratio, 2),
         "target_confidence": round(target_ratio, 2),
         "requires_mapping": not (date_confident and target_confident),
@@ -94,6 +133,7 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
     import pandas as pd
 
     dimension_schema = build_dimension_schema(mapping, df.columns)
+    exogenous_schema = _build_exogenous_schema(mapping, df, target_column)
     parsed_dates = _parse_dates_best(df[date_column], strict=True)
     target, numeric_audit = _numeric_series(df[target_column], return_audit=True, allow_percent=("percent" in _normalized(target_column) or os.environ.get("FORECAST_TARGET_IS_PERCENT", "false").lower() == "true"))
     parse_denominator = max(1, len(df) - numeric_audit["missing_values"])
@@ -114,11 +154,17 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
     clean = pd.DataFrame({"Date": parsed_dates, "Click Count": target})
     for dimension in dimension_schema:
         clean[dimension["canonical_column"]] = _dimension_series(df, dimension["source_column"], "")
+    for feature in exogenous_schema:
+        if feature["retained"]:
+            clean[feature["canonical_column"]] = _exogenous_series(df[feature["source_column"]], feature["physical_type"])
     before_rows = len(clean)
     valid_mask = clean["Date"].notna() & clean["Click Count"].notna()
     valid_rows = int(valid_mask.sum())
     rows_removed = int(before_rows - valid_rows)
-    clean = clean.dropna(subset=["Date", "Click Count"])
+    valid_source = df.loc[valid_mask]
+    exact_duplicate_mask = valid_source.duplicated(subset=list(df.columns), keep="first")
+    exact_duplicates_removed = int(exact_duplicate_mask.sum())
+    clean = clean.loc[valid_mask].loc[~exact_duplicate_mask]
     clean["Date"] = pd.to_datetime(clean["Date"])
     for dimension in dimension_schema:
         column = dimension["canonical_column"]
@@ -126,9 +172,19 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
     grain_columns = ["Date"] + [dimension["canonical_column"] for dimension in dimension_schema]
     aggregation = _aggregation_method(target_column)
     before_aggregation_rows = len(clean)
-    clean = _aggregate_clean(clean, aggregation, dimension_schema).sort_values(grain_columns)
+    group_sizes = clean.groupby(grain_columns, dropna=False).size()
+    grain_collision_groups = int((group_sizes > 1).sum())
+    grain_collision_rows = int(group_sizes[group_sizes > 1].sum())
+    max_rows_per_grain = int(group_sizes.max()) if len(group_sizes) else 0
+    group_size_distribution = {
+        "1": int((group_sizes == 1).sum()),
+        "2-5": int(((group_sizes >= 2) & (group_sizes <= 5)).sum()),
+        "6-10": int(((group_sizes >= 6) & (group_sizes <= 10)).sum()),
+        "11+": int((group_sizes >= 11).sum()),
+    }
+    clean = _aggregate_clean(clean, aggregation, dimension_schema, exogenous_schema).sort_values(grain_columns)
     after_aggregation_rows = len(clean)
-    rows_aggregated = int(before_aggregation_rows - after_aggregation_rows)
+    rows_combined_by_aggregation = int(before_aggregation_rows - after_aggregation_rows)
 
     if len(clean) < 3:
         raise ValueError("Not enough valid date/target rows to train a forecast.")
@@ -149,7 +205,8 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
     # Keep generated compatibility output dataset-scoped. A fixed file name can
     # remain locked by OneDrive/Excel/antivirus while a new upload is processed.
     click_counts_path = preprocessed_path(f"click_counts_{dataset_id}.txt")
-    output_columns = ["Date", "Click Count"] + [dimension["canonical_column"] for dimension in dimension_schema] + ["Store", "Item"]
+    exogenous_columns = [feature["canonical_column"] for feature in exogenous_schema if feature["retained"]]
+    output_columns = ["Date", "Click Count"] + [dimension["canonical_column"] for dimension in dimension_schema] + exogenous_columns + ["Store", "Item"]
     clean[output_columns].to_csv(cleaned_path, index=False)
     clean[output_columns].to_csv(click_counts_path, sep="\t", index=False)
 
@@ -157,19 +214,29 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
     from services.preprocessing_service import build_preprocessed_files
 
     preprocessing = build_preprocessed_files(clean)
+    column_lineage = _column_lineage(df, mapping, dimension_schema, exogenous_schema, date_column, target_column)
+    generated_feature_count = 3
+    retained_original_feature_count = len(exogenous_columns)
     cleaning_stats = {
         "raw_rows": before_rows,
         "raw_columns": len(df.columns),
         "valid_rows": valid_rows,
         "rows_removed": rows_removed,
-        "rows_aggregated": rows_aggregated,
+        "exact_duplicate_rows_removed": exact_duplicates_removed,
+        "grain_collision_groups": grain_collision_groups,
+        "grain_collision_rows": grain_collision_rows,
+        "rows_combined_by_aggregation": rows_combined_by_aggregation,
+        "rows_aggregated": rows_combined_by_aggregation,
+        "post_aggregation_rows": after_aggregation_rows,
+        "max_rows_combined_in_group": max_rows_per_grain,
+        "aggregation_group_size_distribution": group_size_distribution,
         "calendar_rows_generated": calendar_rows_generated,
         "training_rows": training_rows,
         "missing_values_imputed": int(imputation_audit["existing_values_imputed"]),
         "missing_timestamps_generated": calendar_rows_generated,
         "unresolved_generated_rows_removed": unresolved_generated_rows_removed,
-        "row_accounting_expected": valid_rows - rows_aggregated + calendar_rows_generated - unresolved_generated_rows_removed,
-        "row_accounting_reconciled": training_rows == valid_rows - rows_aggregated + calendar_rows_generated - unresolved_generated_rows_removed,
+        "row_accounting_expected": valid_rows - exact_duplicates_removed - rows_combined_by_aggregation + calendar_rows_generated - unresolved_generated_rows_removed,
+        "row_accounting_reconciled": training_rows == valid_rows - exact_duplicates_removed - rows_combined_by_aggregation + calendar_rows_generated - unresolved_generated_rows_removed,
         "invalid_date_rows": invalid_date_rows,
         "invalid_target_rows": invalid_target_rows,
         "rows_removed_reasons": removal_reasons,
@@ -179,8 +246,19 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
         "aggregation": aggregation,
         "imputation": imputation_audit,
         "frequency": freq,
-        "target_display_name": target_column,
+        "target_display_name": mapping.get("target_display_name") or _display_name(target_column),
+        "target_unit": mapping.get("target_unit") or _target_unit(target_column),
+        "domain": mapping.get("domain") or _dataset_domain(target_column, df.columns),
         "dimension_schema": dimension_schema,
+        "exogenous_schema": exogenous_schema,
+        "column_lineage": column_lineage,
+        "feature_counts": {
+            "original_columns": len(df.columns),
+            "retained_original_features": retained_original_feature_count,
+            "generated_features": generated_feature_count,
+            "final_model_feature_candidates": retained_original_feature_count + generated_feature_count,
+            "dropped_columns": sum(not row["retained"] for row in column_lineage),
+        },
         "series_count": series_count(clean, dimension_schema),
         "forecast_grain": {"frequency": freq, "dimensions": [dimension["id"] for dimension in dimension_schema]},
     }
@@ -202,6 +280,9 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
         "artifact_id": artifact_id,
         "source_file": str(source_path),
         "target_column": target_column,
+        "target_display_name": mapping.get("target_display_name") or _display_name(target_column),
+        "target_unit": mapping.get("target_unit") or _target_unit(target_column),
+        "domain": mapping.get("domain") or _dataset_domain(target_column, df.columns),
         "date_column": date_column,
         "cleaned_path": str(cleaned_path),
         "click_counts_path": str(click_counts_path),
@@ -211,6 +292,9 @@ def adapt_dataset(source_file, mapping, dataset_id=None):
         "items": sorted(clean["Item"].dropna().astype(str).unique().tolist()),
         "frequency": freq,
         "dimension_schema": dimension_schema,
+        "exogenous_schema": exogenous_schema,
+        "column_lineage": column_lineage,
+        "feature_counts": cleaning_stats["feature_counts"],
         "dimension_options": dimension_options(clean, dimension_schema),
         "series_count": series_count(clean, dimension_schema),
         "preprocessing_metrics": cleaning_stats,
@@ -328,6 +412,11 @@ def _mapping_with_column_ids(mapping, raw_schema):
         for column in mapping.get("dimension_columns", [])
         if column in id_by_internal
     ]
+    result["exogenous_column_ids"] = [
+        id_by_internal[column]
+        for column in mapping.get("exogenous_columns", [])
+        if column in id_by_internal
+    ]
     return result
 
 
@@ -386,7 +475,11 @@ def _resolve_mapping(dataset, mapping):
         "store_column": dimensions[0]["internal_name"] if dimensions else "",
         "item_column": dimensions[1]["internal_name"] if len(dimensions) > 1 else "",
         "dimension_columns": [column["internal_name"] for column in dimensions],
+        "exogenous_columns": [column["internal_name"] for column in exogenous],
         "mapped_roles": mapped_roles,
+        "domain": _dataset_domain(target["source_name"], [column["source_name"] for column in schema]),
+        "target_display_name": _display_name(target["source_name"]),
+        "target_unit": _target_unit(target["source_name"]),
     }
 
 
@@ -413,6 +506,7 @@ def _role_metadata(column):
     return {
         "column_id": column["column_id"],
         "source_name": column["source_name"],
+        "internal_name": column.get("internal_name", column["source_name"]),
         "position": column["position"],
     }
 
@@ -566,6 +660,156 @@ def _dimension_series(df, column, default):
     return default
 
 
+def _build_exogenous_schema(mapping, df, target_column):
+    """Resolve only explicitly mapped source features; unmapped columns remain documented, not guessed."""
+    import pandas as pd
+
+    roles = (mapping.get("mapped_roles") or {}).get("exogenous") or []
+    configured = mapping.get("exogenous_columns") or []
+    if isinstance(configured, str):
+        configured = [value.strip() for value in configured.split(",") if value.strip()]
+    sources = []
+    role_by_source = {}
+    for role in roles:
+        source = role.get("internal_name") or role.get("source_name")
+        if source in df.columns and source not in sources:
+            sources.append(source)
+            role_by_source[source] = role
+    for source in configured:
+        if source in df.columns and source not in sources:
+            sources.append(source)
+    schema = []
+    for index, source in enumerate(sources):
+        values = df[source]
+        numeric = pd.to_numeric(values, errors="coerce")
+        numeric_ratio = float(numeric.notna().mean()) if len(values) else 0.0
+        unique = set(values.dropna().astype(str).str.strip().str.lower().unique())
+        if unique and unique.issubset({"true", "false", "yes", "no", "0", "1"}):
+            physical_type = "boolean"
+        elif numeric_ratio >= 0.8:
+            physical_type = "numeric"
+        else:
+            physical_type = "categorical"
+        leakage_reason = _leakage_reason(source, target_column)
+        role = role_by_source.get(source, {})
+        schema.append({
+            "column_id": role.get("column_id") or f"source_{df.columns.get_loc(source)}",
+            "source_column": source,
+            "display_name": role.get("source_name") or source,
+            "canonical_column": f"exogenous_{index + 1}",
+            "physical_type": physical_type,
+            "missing_percentage": round(float(values.isna().mean()) * 100, 4) if len(values) else 0.0,
+            "variance": float(numeric.var()) if physical_type == "numeric" and numeric.notna().sum() > 1 else None,
+            "cardinality": int(values.nunique(dropna=True)),
+            "aggregation": _exogenous_aggregation(source, physical_type),
+            "retained": leakage_reason is None,
+            "drop_reason": leakage_reason,
+            "future_available": False,
+            "leakage_risk": "excluded" if leakage_reason else "requires forecast-time availability",
+        })
+    return schema
+
+
+def _leakage_reason(source_column, target_column):
+    source = _normalized(source_column).replace(" ", "_")
+    target = _normalized(target_column).replace(" ", "_")
+    unsafe = ("future_target", "target_lead", "next_target", "label", "post_outcome")
+    if any(token in source for token in unsafe) or (target and target in source and any(token in source for token in ("future", "lead", "next"))):
+        return "Excluded because the mapped feature name indicates future target leakage."
+    if _normalized(target_column) in HEALTHCARE_TARGET_HINTS and _normalized(source_column) in HEALTHCARE_STAFFING_OUTCOME_HINTS:
+        return "Excluded because this staffing outcome is contemporaneous with, or derived from, required manpower."
+    return None
+
+
+def _exogenous_series(series, physical_type):
+    import pandas as pd
+
+    if physical_type == "numeric":
+        return pd.to_numeric(series, errors="coerce")
+    if physical_type == "boolean":
+        normalized = series.astype(str).str.strip().str.lower()
+        return normalized.map({"true": 1.0, "yes": 1.0, "1": 1.0, "false": 0.0, "no": 0.0, "0": 0.0})
+    return series.where(series.notna(), "(missing)").astype(str).str.strip().replace("", "(missing)")
+
+
+def _exogenous_aggregation(source_column, physical_type):
+    configured = os.environ.get("FORECAST_EXOG_AGGREGATIONS", "").strip()
+    if configured:
+        try:
+            method = json.loads(configured).get(source_column)
+            if method in {"sum", "mean", "median", "min", "max", "first", "last"}:
+                return method
+        except (TypeError, ValueError):
+            pass
+    if physical_type == "boolean":
+        return "max"
+    if physical_type == "categorical":
+        return "mode"
+    name = _normalized(source_column)
+    if any(token in name for token in ("amount", "quantity", "volume", "transactions", "events")):
+        return "sum"
+    if any(token in name for token in ("stock", "inventory", "balance", "state")):
+        return "last"
+    return "mean"
+
+
+def _column_lineage(df, mapping, dimension_schema, exogenous_schema, date_column, target_column):
+    import pandas as pd
+
+    mapped_roles = mapping.get("mapped_roles") or {}
+    id_by_source = {}
+    for role in [mapped_roles.get("timestamp"), mapped_roles.get("target")]:
+        if role:
+            id_by_source[role.get("internal_name") or role.get("source_name")] = role.get("column_id")
+    for role in (mapped_roles.get("dimensions") or []) + (mapped_roles.get("exogenous") or []):
+        id_by_source[role.get("internal_name") or role.get("source_name")] = role.get("column_id")
+    dimensions = {item["source_column"]: item for item in dimension_schema}
+    exogenous = {item["source_column"]: item for item in exogenous_schema}
+    lineage = []
+    for position, source in enumerate(df.columns):
+        numeric_values = pd.to_numeric(df[source], errors="coerce")
+        if source == date_column:
+            role, retained, outputs, used = "timestamp", True, ["Date", "date"], ["all models"]
+            reason, leakage = None, "none"
+        elif source == target_column:
+            role, retained, outputs, used = "target", True, ["Click Count", "target"], ["all models"]
+            reason, leakage = None, "protected target"
+        elif source in dimensions:
+            role, retained = "series_dimension", True
+            outputs, used = [dimensions[source]["canonical_column"]], ["series construction", "artifact ownership"]
+            reason, leakage = None, "not used as an unencoded numeric feature"
+        elif source in exogenous:
+            feature = exogenous[source]
+            role, retained = "exogenous", feature["retained"]
+            outputs = [feature["canonical_column"]] if retained else []
+            used = ["SARIMAX exogenous", "Auto ARIMA exogenous", "XGBoost exogenous"] if retained else []
+            reason, leakage = feature.get("drop_reason"), feature["leakage_risk"]
+        else:
+            normalized = _normalized(source)
+            leakage_reason = _leakage_reason(source, target_column)
+            if leakage_reason:
+                role, reason, leakage = "excluded_leakage", leakage_reason, "excluded"
+            elif normalized in PROVENANCE_HINTS or normalized.endswith(" url"):
+                role, reason, leakage = "provenance", "Retained in the immutable source preview for auditability; not a model feature.", "not applicable"
+            elif df[source].nunique(dropna=True) <= 1:
+                role, reason, leakage = "constant_context", "Constant source context is documented but cannot add predictive signal.", "none"
+            else:
+                role, reason, leakage = "ignored", "Not assigned a forecasting role in the confirmed mapping.", "not assessed because ignored"
+            retained, outputs, used = False, [], []
+        lineage.append({
+            "original_column": str(source), "column_id": id_by_source.get(source) or f"col_{position}",
+            "position": position, "physical_type": str(df[source].dtype), "mapped_role": role,
+            "retained": retained, "dropped_stage": None if retained else "mapping/feature eligibility",
+            "reason": reason, "transformed_output_columns": outputs, "used_by": used,
+            "future_availability": "generated" if role == "timestamp" else "not provided" if role == "exogenous" else "not applicable",
+            "leakage_risk": leakage,
+            "missing_percentage": round(float(df[source].isna().mean()) * 100, 4) if len(df) else 0.0,
+            "variance": float(numeric_values.var()) if numeric_values.notna().sum() > 1 else None,
+            "cardinality": int(df[source].nunique(dropna=True)),
+        })
+    return lineage
+
+
 def _fill_group_date_gaps(clean, freq, policy=None, dimension_schema=None):
     import pandas as pd
 
@@ -609,24 +853,24 @@ def _fill_group_date_gaps(clean, freq, policy=None, dimension_schema=None):
     return result, {"method": policy["method"], "existing_values_imputed": existing_values_imputed, "calendar_rows_generated": calendar_rows_generated, "generated_values_filled": generated_values_filled, "unresolved_generated_rows_removed": unresolved_generated_rows_removed, "future_dependent": False, "max_gap": policy.get("max_gap", 0)}
 
 
-def _aggregate_clean(clean, method, dimension_schema=None):
+def _aggregate_clean(clean, method, dimension_schema=None, exogenous_schema=None):
     grain = ["Date"] + [dimension["canonical_column"] for dimension in dimension_schema or []]
     grouped = clean.groupby(grain, as_index=False, dropna=False)
-    if method == "mean":
-        return grouped["Click Count"].mean()
-    if method == "median":
-        return grouped["Click Count"].median()
-    if method == "last":
-        return grouped["Click Count"].last()
-    if method == "first":
-        return grouped["Click Count"].first()
-    if method == "min":
-        return grouped["Click Count"].min()
-    if method == "max":
-        return grouped["Click Count"].max()
-    if method == "count":
-        return grouped["Click Count"].count()
-    return grouped["Click Count"].sum()
+    aggregations = {"Click Count": method}
+    for feature in exogenous_schema or []:
+        if not feature.get("retained") or feature["canonical_column"] not in clean:
+            continue
+        aggregation = feature.get("aggregation", "mean")
+        aggregations[feature["canonical_column"]] = _mode_or_last if aggregation == "mode" else aggregation
+    return grouped.agg(aggregations)
+
+
+def _mode_or_last(values):
+    modes = values.dropna().mode()
+    if len(modes):
+        return modes.iloc[0]
+    non_null = values.dropna()
+    return non_null.iloc[-1] if len(non_null) else None
 
 
 def _aggregation_method(target_column):
@@ -688,6 +932,30 @@ def _first_name_match(columns, hints):
         if any(hint in normalized for hint in hints):
             return column
     return ""
+
+
+def _first_exact_name_match(columns, hints):
+    normalized_hints = {_normalized(hint) for hint in hints}
+    return next((column for column in columns if _normalized(column) in normalized_hints), "")
+
+
+def _dataset_domain(target_column, columns=None):
+    normalized_columns = {_normalized(column) for column in (columns if columns is not None else [])}
+    if _normalized(target_column) in HEALTHCARE_TARGET_HINTS or {"patient census", "patient acuity index"} & normalized_columns:
+        return "healthcare_staffing"
+    return "general"
+
+
+def _target_unit(target_column):
+    normalized = _normalized(target_column)
+    if normalized in HEALTHCARE_TARGET_HINTS or any(token in normalized for token in ("manpower", "staffing", "headcount")):
+        return "staff members"
+    return None
+
+
+def _display_name(value):
+    text = re.sub(r"[_\-]+", " ", str(value or "")).strip()
+    return " ".join(word.upper() if word.lower() in {"id", "url"} else word.capitalize() for word in text.split()) or "Target"
 
 
 def _normalized(value):

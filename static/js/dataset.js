@@ -176,6 +176,10 @@ function resetEnrichmentState(message, { preservePreview = false } = {}) {
   if (filters) { filters.replaceChildren(); filters.classList.add("is-hidden"); }
   const analyticsNotice = document.getElementById("dataStudioAnalyticsNotice");
   if (analyticsNotice) { analyticsNotice.textContent = ""; analyticsNotice.classList.add("is-hidden"); }
+  const lineageSurface = document.getElementById("columnLineageSurface");
+  const lineageTable = document.getElementById("columnLineageTable");
+  lineageSurface?.classList.add("is-hidden");
+  if (lineageTable) lineageTable.replaceChildren();
 }
 
 function resetTrainingPanel() {
@@ -228,9 +232,15 @@ function renderMapping(dataset, columns, mapping) {
   const timestampId = mapping.timestamp_column_id || "";
   const targetId = mapping.target_column_id || "";
   const dimensions = mapping.dimension_column_ids || [];
+  const exogenous = new Set(mapping.exogenous_column_ids || []);
+  const reserved = new Set([timestampId, targetId, ...dimensions].filter(Boolean));
   const sourceName = (columnId) => columns.find(column => column.column_id === columnId)?.display_name || "Select a column";
+  const driverOptions = columns
+    .filter(column => !reserved.has(column.column_id))
+    .map(column => `<label class="driver-option"><input type="checkbox" name="exogenous_column_ids" value="${escapeHtml(column.column_id)}"${exogenous.has(column.column_id) ? " checked" : ""}><span>${escapeHtml(columnLabel(column))}<small>${escapeHtml(column.physical_type || "unknown")}</small></span></label>`)
+    .join("");
   return `
-    <div class="detected-note"><span>Date signal<strong>${escapeHtml(sourceName(timestampId))}</strong></span><span>Target signal<strong>${escapeHtml(sourceName(targetId))}</strong></span></div>
+    <div class="detected-note"><span>Date signal<strong>${escapeHtml(sourceName(timestampId))}</strong></span><span>Staffing target<strong>${escapeHtml(sourceName(targetId))}</strong></span><span>Source columns<strong>${columns.length} profiled</strong></span><span>Suggested drivers<strong>${exogenous.size} selected</strong></span></div>
     <form class="mapping-form" id="mappingForm">
       <input type="hidden" name="dataset_id" value="${escapeHtml(dataset.id || "")}">
       <input type="hidden" name="csv_file" value="${escapeHtml(mapping.csv_file || dataset.source_file || "")}">
@@ -238,6 +248,7 @@ function renderMapping(dataset, columns, mapping) {
       <label>Target column<select name="target_column_id" required>${options(targetId)}</select></label>
       <label>Primary series dimension <small>optional</small><select name="primary_dimension_column_id">${options(dimensions[0] || "", true)}</select></label>
       <label>Secondary series dimension <small>optional</small><select name="secondary_dimension_column_id">${options(dimensions[1] || "", true)}</select></label>
+      <fieldset class="driver-mapping"><legend>Operational drivers <small>optional; used for historical exogenous-model evaluation</small></legend><div class="driver-grid">${driverOptions || '<span class="muted-copy">No additional columns are available.</span>'}</div></fieldset>
       <button class="primary-button" type="submit"><i data-lucide="wand-sparkles"></i>Apply mapping & enrich</button>
     </form>`;
 }
@@ -250,7 +261,10 @@ async function saveCurrentMapping(event) {
   resetTrainingPanel();
   setNotice("Cleaning, filling time gaps, and building enrichment insights...", "info-state");
   try {
-    const data = await postJson("/dataset/map", Object.fromEntries(new FormData(form).entries()));
+    const formData = new FormData(form);
+    const payload = Object.fromEntries(formData.entries());
+    payload.exogenous_column_ids = formData.getAll("exogenous_column_ids");
+    const data = await postJson("/dataset/map", payload);
     latestDataset = { ...latestDataset, ...data.dataset, adapted: data.adapted };
     document.getElementById("trainButton").disabled = false;
     setNotice(`Training input ready: ${numberFormat(data.adapted.rows_used)} reconciled training rows at ${data.adapted.frequency} frequency.`, "success-state");
@@ -339,6 +353,27 @@ function renderQuality(data) {
   document.getElementById("enrichment-cards").innerHTML = cards.map((metric) => `<article class="insight-card" data-metric="${escapeHtml(metric.key)}"><span>${escapeHtml(metric.label)}</span><strong>${formatMetricValue(metric.value)}</strong><small>${escapeHtml(metric.description)} ${escapeHtml(metric.calculation)}</small></article>`).join("");
   const explanation = document.getElementById("preprocessingExplanation");
   if (explanation) explanation.textContent = data.preprocessing_explanation || "Preprocessing accounting is unavailable.";
+  renderColumnLineage(data.preprocessing?.column_lineage || []);
+}
+
+function renderColumnLineage(lineage) {
+  const target = document.getElementById("columnLineageTable");
+  const surface = document.getElementById("columnLineageSurface");
+  const summary = document.getElementById("columnLineageSummary");
+  if (!target || !surface) return;
+  if (!lineage.length) {
+    surface.classList.add("is-hidden");
+    target.replaceChildren();
+    return;
+  }
+  const retained = lineage.filter(column => column.retained).length;
+  if (summary) summary.textContent = `${lineage.length} source columns · ${retained} retained roles`;
+  target.innerHTML = `<table><thead><tr><th>Source column</th><th>Detected type</th><th>Forecast role</th><th>Status</th><th>Model usage / rationale</th></tr></thead><tbody>${lineage.map(column => {
+    const usage = (column.used_by || []).join(", ") || column.reason || "Documented only";
+    const status = column.retained ? "Retained" : "Excluded";
+    return `<tr><td><strong>${escapeHtml(column.original_column)}</strong></td><td>${escapeHtml(column.physical_type)}</td><td>${escapeHtml(String(column.mapped_role || "ignored").replaceAll("_", " "))}</td><td><span class="model-status ${column.retained ? "completed" : "excluded"}">${status}</span></td><td class="lineage-reason">${escapeHtml(usage)}</td></tr>`;
+  }).join("")}</tbody></table>`;
+  surface.classList.remove("is-hidden");
 }
 
 function renderEnrichmentCharts(data) {

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Model Leaderboard | ACI Forecast Intelligence{% endblock %}
+{% block title %}Model Leaderboard | ACI Healthcare Workforce Forecast{% endblock %}
 {% block breadcrumb %}Model Leaderboard{% endblock %}
 {% block content %}
-<section class="page-intro compact" data-page="model-metrics"><div><span class="section-kicker">Evidence-based selection</span><h1>Model Leaderboard</h1><p>Rolling-origin performance ranked by lowest MAPE.</p></div><span class="status-chip"><i data-lucide="shield-check"></i>Real trained models</span></section>
+<section class="page-intro compact" data-page="model-metrics"><div><span class="section-kicker">Evidence-based staffing forecast selection</span><h1>Model Leaderboard</h1><p>Rolling-origin manpower forecast performance ranked by lowest MAPE.</p></div><span class="status-chip"><i data-lucide="shield-check"></i>Real trained models</span></section>
 
 <section class="champion-hero">
   <div class="champion-identity"><span class="champion-badge"><i data-lucide="award"></i>Champion Model</span><h2>{{ champion.model_label or champion.model or "Pending" }}</h2><p>Best completed candidate by average rolling-origin MAPE.</p></div>

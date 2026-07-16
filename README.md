@@ -1,22 +1,34 @@
-# ACI Forecast Intelligence
+# ACI Healthcare Manpower Forecasting
 
-Premium Flask forecasting workspace for uploaded operational datasets. The app profiles source data, preserves mapped series dimensions, trains the full ML model portfolio, evaluates candidates with rolling-origin validation, and produces a future forecast beyond the final actual date.
+Flask forecasting workspace configured for `manpower_healthcare.xlsx`. The app profiles all 24 source columns, preserves department/facility identity, prepares daily staffing requirements, trains the full model portfolio, evaluates candidates with rolling-origin validation, and produces a future manpower forecast beyond the final actual date.
+
+## Healthcare workbook mapping
+
+The included workbook contains 396 daily records from 2025-01-01 through 2026-01-31. Rows may arrive out of order; preprocessing sorts them by date and mapped series before training.
+
+- Timestamp: `date`
+- Forecast target: `manpower_required` (staff members)
+- Series dimensions: `department`, then `facility_id`
+- Suggested operational drivers: `day_of_week`, `is_weekend`, `is_holiday`, `holiday_name`, `season`, `patient_census`, `occupancy_rate`, `patient_acuity_index`, `admissions`, and `discharges`
+- Explicit leakage exclusions: `total_staff_hours`, `scheduled_staff`, `absent_staff`, `available_staff`, and `overtime_hours`
+- Context/provenance retained in the immutable raw preview: facility/location fields, `data_origin`, and `source_url`
+
+The Data Studio shows the disposition of every source column after mapping. Source drivers support historical evaluation for exogenous models. Future exogenous forecasts are only published when future driver values are genuinely available; standard time-series models continue to publish future manpower forecasts without inventing patient or staffing inputs.
 
 ## Setup
 
 ```powershell
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
 
 Open `http://127.0.0.1:5000`.
 
 ## Workflow
 
-1. Open `/dataset` and upload a `.csv`, `.tsv`, `.txt`, or `.xlsx` file.
-2. Confirm the detected timestamp, target, and optional series-dimension columns.
+1. Open `/dataset` and upload `manpower_healthcare.xlsx` (or another `.csv`, `.tsv`, `.txt`, or `.xlsx` file).
+2. Confirm the detected timestamp, manpower target, department/facility dimensions, and operational drivers.
 3. Apply mapping to clean the dataset and view quality and enrichment insights.
 4. Start **Full ML Training** and monitor live model status and runtime.
 5. Review the champion on `/dashboard` and inspect future forecasts on `/forecast-explorer`.
@@ -36,7 +48,7 @@ Validation uses rolling-origin folds where the dataset is large enough. Each com
 The repository includes a Docker-based `render.yaml`. In Render:
 
 1. Choose **New > Blueprint**.
-2. Connect `vijju396/Timeseries_Forecast` and select the `main` branch.
+2. Connect `vijju396/Timeseries_Forecast` and select the `healthcare-forecasting` branch.
 3. Confirm the Blueprint and create the `timeseries-forecast` service.
 4. Wait for `/health` to pass, then open the generated `onrender.com` URL.
 

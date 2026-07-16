@@ -7,12 +7,22 @@ def build_preprocessed_files(cleaned_df=None):
     if cleaned_df is None:
         cleaned_df = pd.read_csv(preprocessed_path("cleaned_training_input.csv"))
 
-    df = cleaned_df.copy()
-    df["date"] = pd.to_datetime(df["Date"])
-    df["target"] = pd.to_numeric(df["Click Count"], errors="coerce")
-    df = df.dropna(subset=["date", "target"]).sort_values("date")
-    df = df.groupby("date", as_index=False)["target"].sum()
-    df = _add_exogenous(df[["date", "target"]])
+    source = cleaned_df.copy()
+    df = pd.DataFrame({
+        "date": pd.to_datetime(source["Date"], errors="coerce"),
+        "target": pd.to_numeric(source["Click Count"], errors="coerce"),
+    })
+    retained = [
+        column for column in source.columns
+        if str(column).startswith("dimension_") or str(column).startswith("exogenous_")
+    ]
+    for column in retained:
+        df[column] = source[column]
+    sort_columns = ["date"] + [column for column in retained if str(column).startswith("dimension_")]
+    df = df.dropna(subset=["date", "target"]).sort_values(sort_columns).reset_index(drop=True)
+    # The cleaned artifact is already at timestamp + mapped-dimensions grain.
+    # Keep that grain here; aggregate model scope is constructed explicitly later.
+    df = _add_exogenous(df)
 
     holdout_size = _holdout_size(len(df))
     train = df.iloc[:-holdout_size].copy() if holdout_size else df.copy()
@@ -32,6 +42,10 @@ def build_preprocessed_files(cleaned_df=None):
         "predictions": str(predictions_path),
         "rows": len(df),
         "holdout_rows": len(predictions),
+        "retained_source_features": [column for column in retained if str(column).startswith("exogenous_")],
+        "dimension_columns": [column for column in retained if str(column).startswith("dimension_")],
+        "generated_features": ["week_exog", "dayOfWeek_exog", "month_exog"],
+        "final_feature_count": len([column for column in retained if str(column).startswith("exogenous_")]) + 3,
     }
 
 

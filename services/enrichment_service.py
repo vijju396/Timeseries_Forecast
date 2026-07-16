@@ -24,11 +24,12 @@ def build_dataset_profile(cleaned_df, raw_df=None, cleaning_stats=None):
     raw_rows = int(stats.get("raw_rows", raw_rows))
     valid_rows = int(stats.get("valid_rows", raw_rows))
     rows_removed = int(stats.get("rows_removed", max(raw_rows - valid_rows, 0)))
+    exact_duplicates_removed = int(stats.get("exact_duplicate_rows_removed", 0))
     rows_aggregated = int(stats.get("rows_aggregated", 0))
     calendar_rows_generated = int(stats.get("calendar_rows_generated", 0))
     unresolved_generated_rows_removed = int(stats.get("unresolved_generated_rows_removed", 0))
     training_rows = int(stats.get("training_rows", len(frame)))
-    expected_training_rows = valid_rows - rows_aggregated + calendar_rows_generated - unresolved_generated_rows_removed
+    expected_training_rows = valid_rows - exact_duplicates_removed - rows_aggregated + calendar_rows_generated - unresolved_generated_rows_removed
 
     profile = {
         "columns": {
@@ -43,6 +44,7 @@ def build_dataset_profile(cleaned_df, raw_df=None, cleaning_stats=None):
             "raw_rows": raw_rows,
             "valid_rows": valid_rows,
             "rows_removed": rows_removed,
+            "exact_duplicate_rows_removed": exact_duplicates_removed,
             "rows_aggregated": rows_aggregated,
             "calendar_rows_generated": calendar_rows_generated,
             "training_rows": training_rows,
@@ -121,7 +123,7 @@ def _preprocessing_metrics(profile):
         {"key": "rows_removed", "label": "Rows Removed", "value": summary["rows_removed"], "description": "Invalid dates, missing mandatory targets, or parsing failures.", "calculation": "Raw rows − valid rows."},
         {"key": "rows_aggregated", "label": "Rows Aggregated", "value": summary["rows_aggregated"], "description": f"Observations merged at forecast grain using {aggregation}.", "calculation": "Valid rows − unique timestamp/series grain rows."},
         {"key": "calendar_rows_generated", "label": "Calendar Rows Generated", "value": summary["calendar_rows_generated"], "description": "Synthetic rows created for missing timestamps.", "calculation": "Expanded calendar rows − post-aggregation rows."},
-        {"key": "training_rows", "label": "Training Rows", "value": summary["training_rows"], "description": "Final rows available to model training.", "calculation": "Valid − aggregated + calendar-generated − unresolved generated rows."},
+        {"key": "training_rows", "label": "Training Rows", "value": summary["training_rows"], "description": "Final rows available to model training.", "calculation": "Valid - exact duplicates - aggregated + calendar-generated - unresolved generated rows."},
         {"key": "missing_values_imputed", "label": "Missing Values Imputed", "value": summary["missing_values_imputed"], "description": "Existing NULL values filled by the configured policy.", "calculation": "Filled values on source-backed rows only."},
         {"key": "missing_timestamps_generated", "label": "Missing Timestamps Generated", "value": summary["missing_timestamps_generated"], "description": "Entirely new timestamps introduced by calendar completion.", "calculation": "Count of synthetic timestamp rows."},
         {"key": "frequency", "label": "Frequency", "value": frequency, "description": "Inferred or configured observation cadence.", "calculation": "Date-spacing analysis after aggregation."},
@@ -146,6 +148,7 @@ def _preprocessing_explanation(profile):
     parts = [
         f"Uploaded rows: {summary['raw_rows']:,}.",
         f"Rows removed: {summary['rows_removed']:,} invalid mandatory records{removal_detail}.",
+        f"Exact duplicate rows removed: {summary.get('exact_duplicate_rows_removed', 0):,}.",
         f"Rows aggregated: {summary['rows_aggregated']:,} observations combined at forecast grain using {aggregation}.",
         f"Calendar rows generated: {summary['calendar_rows_generated']:,} synthetic timestamps required for continuous {profile['date_range'].get('frequency')} frequency.",
         f"Training dataset: {summary['training_rows']:,} rows.",

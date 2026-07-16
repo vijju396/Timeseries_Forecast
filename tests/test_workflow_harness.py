@@ -55,6 +55,17 @@ def main():
         data_service.UPLOADS_DIR = data_service.DATA_DIR / "uploads"
         data_service.RUNTIME_DATA_DIR = data_service.DATA_DIR / "runtime"
         data_service.ensure_data_directories()
+        locked = data_service.RUNTIME_DATA_DIR / "sessions" / "locked"
+        locked.mkdir(parents=True)
+        (locked / "state.json").write_text("{}", encoding="utf-8")
+        original_rmtree = data_service.shutil.rmtree
+        data_service.shutil.rmtree = lambda _path: (_ for _ in ()).throw(PermissionError("simulated OneDrive lock"))
+        try:
+            assert data_service._remove_generated_path(locked, attempts=2, delay=0) is False
+            assert locked.exists()
+        finally:
+            data_service.shutil.rmtree = original_rmtree
+        assert data_service._remove_generated_path(locked) is True
         (data_service.UPLOADS_DIR / "stale.csv").write_text("stale", encoding="utf-8")
         data_service.preprocessed_path("stale.csv").write_text("stale", encoding="utf-8")
         data_service.save_json("current_dataset.json", {"dataset_id": "stale"})

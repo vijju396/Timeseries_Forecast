@@ -4,7 +4,7 @@ import uuid
 
 from flask import Flask, jsonify, render_template, request, session
 
-from services import dataset_adapter, drift_service, enrichment_service, forecast_service, metrics_service, training_service, upload_service
+from services import dataset_adapter, dependency_service, drift_service, enrichment_service, forecast_service, metrics_service, training_service, upload_service
 from services.raw_preview_service import RawPreviewError
 from services.data_service import (
     clear_generated_dataset_state,
@@ -17,6 +17,10 @@ from services.data_service import (
 
 initialize_runtime_state()
 training_service.reset_training_state(force=True)
+dependency_service.log_startup_diagnostics(
+    os.path.dirname(os.path.abspath(__file__)),
+    development=os.environ.get("FLASK_DEBUG", "0") == "1",
+)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
@@ -270,6 +274,7 @@ def _validated_training_status():
             "duration_display": "0 sec",
             "completed_models": [],
             "failed_models": [],
+            "skipped_models": [],
             "total_models": 13,
             "rows_used_for_training": 0,
             "evaluation_mode": "--",

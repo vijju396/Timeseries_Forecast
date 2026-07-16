@@ -26,7 +26,8 @@ def main():
     assert 'AbortController' in explorer_script and 'requestSequence' in explorer_script and 'drift.request_id' in explorer_script
     assert 'forecastDriftChart' not in command_template and 'forecastDriftChart' not in command_script
     assert 'driftChart' not in template and 'api/drift' not in (ROOT / "static/js/model_metrics.js").read_text(encoding="utf-8")
-    assert 'label: "Actual"' in dashboard and 'label: "Historical Prediction"' in dashboard and 'label: "Future Prediction"' in dashboard
+    assert 'label: "Actual manpower required"' in dashboard and 'label: "Historical backtest"' in dashboard and 'label: "Future manpower required"' in dashboard
+    assert "data-dashboard-dimension" in command_template and 'filterState.dimensions = JSON.stringify(dimensions)' in dashboard
     assert 'label: "Actual"' in explorer and 'label: "Historical Prediction"' in explorer and 'label: "Future Prediction"' in explorer
     assert 'toPoints(data.historical_actual || [], "actual")' in explorer
     assert 'toPoints(data.historical_prediction || [], "historical")' in explorer
@@ -49,6 +50,7 @@ def main():
     assert "/api/data-studio-analytics" in dataset_script and "canonicalDataStudioFilterState" in dataset_script
     assert "AbortController" in dataset_script and "dataStudioAnalyticsSequence" in dataset_script
     assert "preprocessing_metrics" in dataset_script and "preprocessing_explanation" in dataset_script
+    assert "exogenous_column_ids" in dataset_script and 'id="columnLineageTable"' in dataset_template and "renderColumnLineage" in dataset_script
     assert "Cleaned Rows" not in dataset_script and "Duplicate Rows" not in dataset_script
     assert "Primary series dimension" in dataset_script and "Secondary series dimension" in dataset_script
     assert "Training rows" in training_template and "Cleaned rows" not in training_template

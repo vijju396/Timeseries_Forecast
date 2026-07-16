@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Forecast Explorer | ACI Forecast Intelligence{% endblock %}
+{% block title %}Manpower Forecast Explorer | ACI Healthcare Workforce Forecast{% endblock %}
 {% block breadcrumb %}Forecast Explorer{% endblock %}
 {% block content %}
-<section id="forecastExplorerPage" class="page-intro compact" data-page="forecast-explorer"><div><span class="section-kicker">Future scenario lens</span><h1>Forecast Explorer</h1><p>Trace the handoff from observed history to model-projected demand.</p></div><span class="status-chip"><i data-lucide="scan-line"></i>Future-aware view</span></section>
+<section id="forecastExplorerPage" class="page-intro compact" data-page="forecast-explorer"><div><span class="section-kicker">Future staffing lens</span><h1>Manpower Forecast Explorer</h1><p>Trace the handoff from observed staffing requirements to model-projected workforce needs.</p></div><span class="status-chip"><i data-lucide="scan-line"></i>Future-aware view</span></section>
 <form class="control-deck explorer-controls" id="forecastFilters">
   <input type="hidden" name="dataset_id" value="{{ filter_options.dataset_id or '' }}">
   <input type="hidden" name="artifact_id" value="{{ filter_options.artifact_id or '' }}">
@@ -11,7 +11,7 @@
   {% for dimension in filter_options.dimensions %}<label>{{ dimension.label }}<select name="{{ dimension.id }}" data-forecast-dimension data-dimension-index="{{ loop.index0 }}"><option value="">All {{ dimension.label }}</option>{% for option in dimension['values'] %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>{% endfor %}
   <label>Granularity<select name="granularity">{% for option in filter_options.granularities %}<option>{{ option }}</option>{% endfor %}</select></label>
   <label>Future horizon<select name="horizon">{% for option in filter_options.horizons_by_granularity['Daily'] %}<option value="{{ option.label }}" data-horizon-value="{{ option.value }}" data-horizon-unit="{{ option.unit }}" {{ 'selected' if option.label == '30 days' else '' }}>{{ option.label }}</option>{% endfor %}</select></label>
-  <label>Model<select name="model">{% if filter_options.model_options %}{% for option in filter_options.model_options %}<option value="{{ option.model_id }}">{{ option.display_name }}</option>{% endfor %}{% else %}{% for option in filter_options.models %}<option>{{ option }}</option>{% endfor %}{% endif %}</select></label>
+  <label>Model<select name="model">{% if filter_options.model_options %}{% for option in filter_options.model_options %}<option value="{{ option.model_id }}" {{ 'selected' if option.model_id == filter_options.global_champion.model_id else '' }}>{{ option.display_name }}</option>{% endfor %}{% else %}{% for option in filter_options.models %}<option>{{ option }}</option>{% endfor %}{% endif %}</select></label>
   <button class="icon-button refresh-button filter-button" type="button" aria-label="Apply filters"><i data-lucide="sliders-horizontal"></i></button>
 </form>
 <section class="forecast-meta"><div><span>Last actual date</span><strong id="lastActualDate">--</strong></div><i data-lucide="arrow-right"></i><div class="future-meta"><span>Forecast starts</span><strong id="forecastStartDate">--</strong></div><div><span>Forecast ends</span><strong id="forecastEndDate">--</strong></div><div><span>Selected model</span><strong id="explorerModel">--</strong></div></section>

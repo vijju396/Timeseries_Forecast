@@ -18,6 +18,12 @@ if (dashboardPage) {
     if (activeRequest) activeRequest.abort();
     activeRequest = new AbortController();
     const filterState = Object.fromEntries(new FormData(form).entries());
+    const dimensions = {};
+    form.querySelectorAll("[data-dashboard-dimension]").forEach(select => {
+      if (select.value) dimensions[select.name] = select.value;
+      delete filterState[select.name];
+    });
+    filterState.dimensions = JSON.stringify(dimensions);
     filterState.request_id = String(requestId);
     try {
       const response = await fetch(`/api/forecast?${new URLSearchParams(filterState)}`, { signal: activeRequest.signal });
@@ -44,9 +50,9 @@ if (dashboardPage) {
   function renderTimeline(data) {
     if (actualChart) actualChart.destroy();
     actualChart = new Chart(document.getElementById("actualPredictedChart"), { type: "line", plugins: [markerPlugin], data: { labels: data.labels, datasets: [
-      { label: "Actual", data: data.actual, borderColor: colors.ink, backgroundColor: "rgba(19,34,56,.06)", borderWidth: 2, pointRadius: 0, tension: .2 },
-      { label: "Historical Prediction", data: data.fitted, borderColor: colors.violet, borderDash: [5,4], borderWidth: 2, pointRadius: 0, tension: .2 },
-      { label: "Future Prediction", data: data.future_forecast, borderColor: colors.cyan, backgroundColor: "rgba(22,184,212,.12)", borderWidth: 2.5, pointRadius: 0, tension: .2 }
+      { label: "Actual manpower required", data: data.actual, borderColor: colors.ink, backgroundColor: "rgba(19,34,56,.06)", borderWidth: 2, pointRadius: 0, tension: .2 },
+      { label: "Historical backtest", data: data.fitted, borderColor: colors.violet, borderDash: [5,4], borderWidth: 2, pointRadius: 0, tension: .2 },
+      { label: "Future manpower required", data: data.future_forecast, borderColor: colors.cyan, backgroundColor: "rgba(22,184,212,.12)", borderWidth: 2.5, pointRadius: 0, tension: .2 }
     ] }, options: { ...chartOptions(false, true), forecastStartIndex: data.forecast_start_index } });
   }
 

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Forecast Data Studio | ACI Forecast Intelligence{% endblock %}
+{% block title %}Healthcare Data Studio | ACI Healthcare Workforce Forecast{% endblock %}
 {% block breadcrumb %}Data Studio{% endblock %}
 {% block content %}
 <section class="page-intro" data-page="dataset">
-  <div><span class="section-kicker">Intelligent data preparation</span><h1>Forecast Data Studio</h1><p>Upload, clean, enrich, train, and forecast from one intelligent workspace.</p></div>
+  <div><span class="section-kicker">Healthcare data preparation</span><h1>Manpower Forecast Data Studio</h1><p>Profile every source column, prepare the staffing series, train models, and forecast future workforce requirements.</p></div>
   <nav class="workflow-steps" aria-label="Data Studio workflow">
     <button class="workflow-step active" type="button" data-target="upload-section"><span>1</span>Upload</button>
     <button class="workflow-step" type="button" data-target="mapping-section" disabled title="Upload a dataset to unlock mapping"><span>2</span>Map</button>
@@ -14,11 +14,11 @@
 
 <section class="studio-grid">
   <article class="surface upload-surface studio-section" id="upload-section">
-    <div class="panel-heading"><div><span class="panel-index">01</span><h2>Upload source data</h2><p>Start with a time-based operational dataset.</p></div><span class="format-badge">CSV / TSV / TXT / XLSX</span></div>
+    <div class="panel-heading"><div><span class="panel-index">01</span><h2>Upload healthcare staffing data</h2><p>Start with dated facility, patient-demand, and manpower observations.</p></div><span class="format-badge">CSV / TSV / TXT / XLSX</span></div>
     <form id="datasetUploadForm" enctype="multipart/form-data">
       <label class="drop-zone" id="dropZone" for="datasetFile">
         <span class="drop-icon"><i data-lucide="cloud-upload"></i></span>
-        <strong>Drop your dataset here</strong>
+        <strong>Drop the manpower workbook here</strong>
         <span>or browse files from your device</span>
         <input id="datasetFile" name="dataset_file" type="file" accept=".csv,.tsv,.txt,.xlsx" required>
       </label>
@@ -48,6 +48,7 @@
       <article class="surface chart-panel"><div class="panel-heading"><div><h3>Seasonality profile</h3><p>Average target by month</p></div><i data-lucide="calendar-range"></i></div><canvas id="seasonalityChart"></canvas></article>
       <article class="surface chart-panel" id="dimensionPanel"><div class="panel-heading"><div><h3 id="dimensionTitle">Top dimensions</h3><p>Contribution to target volume</p></div><i data-lucide="layers-3"></i></div><canvas id="dimensionChart"></canvas></article>
     </div>
+    <article id="columnLineageSurface" class="surface lineage-surface is-hidden"><div class="panel-heading"><div><h3>Source column usage</h3><p>Every uploaded column is classified as a target, series key, operational driver, contextual field, provenance, or leakage exclusion.</p></div><span class="format-badge" id="columnLineageSummary">--</span></div><div id="columnLineageTable" class="table-wrap"></div></article>
   </div>
   <article id="previewSurface" class="surface preview-surface is-hidden"><div class="panel-heading"><div><h3>Dataset preview</h3><p>Raw records from the active upload</p></div><span class="format-badge" id="previewBadge">First 10 rows</span></div><div id="previewTable" class="table-wrap"></div></article>
 </section>

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -106,6 +107,30 @@ def _is_project_child(path, allow_project_root=False):
         return False
 
 
+def _remove_generated_path(path, attempts=5, delay=0.05):
+    path = Path(path)
+    for attempt in range(max(1, attempts)):
+        try:
+            if not path.exists() and not path.is_symlink():
+                return True
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+            return True
+        except FileNotFoundError:
+            return True
+        except (PermissionError, OSError) as exc:
+            if attempt + 1 < attempts:
+                time.sleep(delay * (attempt + 1))
+                continue
+            logging.getLogger(__name__).warning(
+                "Could not remove locked generated path after %s attempts; startup will continue: %s (%s)",
+                attempts, path, exc,
+            )
+            return False
+
+
 def _remove_generated_contents(directory):
     directory = Path(directory).resolve()
     if not _is_project_child(directory):
@@ -114,12 +139,7 @@ def _remove_generated_contents(directory):
     for child in directory.iterdir():
         if not _is_project_child(child):
             raise RuntimeError(f"Refusing cleanup outside project directory: {child}")
-        if child.is_dir():
-            import shutil
-
-            shutil.rmtree(child)
-        else:
-            child.unlink(missing_ok=True)
+        _remove_generated_path(child)
 
 
 def clear_generated_dataset_state():
@@ -137,7 +157,7 @@ def clear_all_generated_dataset_state():
     _remove_generated_contents(PREPROCESSED_DIR)
     legacy_click_counts = DATA_DIR / "Click Counts.txt"
     if _is_project_child(legacy_click_counts):
-        legacy_click_counts.unlink(missing_ok=True)
+        _remove_generated_path(legacy_click_counts)
     _RUNTIME_MEMORY.clear()
 
 
